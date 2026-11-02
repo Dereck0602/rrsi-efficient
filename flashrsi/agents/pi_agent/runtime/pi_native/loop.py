@@ -1384,6 +1384,11 @@ async def _run(
         ),
         "timestamp": _now_ms(),
     }
+    if config.get("_worker_system_prompt"):
+        system_message["sections"] = {
+            **system_message.get("sections", {}),
+            "flashrsi_worker": config["_worker_system_prompt"],
+        }
     declarations = [dict(schema["function"]) for schema in resources.tool_schemas]
     if declarations:
         system_message["toolsAdded"] = declarations
@@ -1608,13 +1613,19 @@ async def _run(
                 error_message=error or (None if compacted else "Compaction cancelled"),
             )
         previous_system = current_system_message(session.messages())
-        if resources.system_sections is not None and previous_system is not None:
+        worker_changed = (previous_system or {}).get("sections", {}).get(
+            "flashrsi_worker"
+        ) != config.get("_worker_system_prompt")
+        if previous_system is not None and (
+            resources.system_sections is not None or worker_changed
+        ):
+            sections = system_message.get("sections", {})
             system_message["sections"] = {
-                **resources.system_sections,
+                **sections,
                 **{
                     name: None
                     for name in previous_system.get("sections", {})
-                    if name not in resources.system_sections
+                    if name not in sections
                 },
             }
         prompt_known = (
@@ -1624,6 +1635,7 @@ async def _run(
         if (
             previous_system is None
             or not prompt_known
+            or worker_changed
             or previous_system.get("toolsAdded", []) != declarations
         ):
             if prompt_known:
@@ -1878,8 +1890,7 @@ async def _run(
                     "model": model,
                     "usage": _pi_usage({}),
                     "stopReason": "error",
-                    "thinkingLevel": _reasoning_effort(config, config["llm"])
-                    or "off",
+                    "thinkingLevel": _reasoning_effort(config, config["llm"]) or "off",
                     "errorMessage": str(exc),
                     "timestamp": _now_ms(),
                 }

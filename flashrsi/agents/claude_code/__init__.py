@@ -97,6 +97,8 @@ class ClaudeCode(Agent):
                 )
             except FileNotFoundError:
                 instructions = ""
+            if config.get("_worker_system_prompt"):
+                instructions += "\n\n" + config["_worker_system_prompt"]
             settings = _settings(self.files_dir / "settings.json")
         except (OSError, UnicodeError, ValueError) as exc:
             return Trajectory(

@@ -45,6 +45,8 @@ class MiniAgent(Agent):
                 "workspace_dir": str(self.files_dir),
                 "runs_root": str(root / "runs"),
             }
+            if config.get("_worker_system_prompt"):
+                request["system_prompt_append"] = config["_worker_system_prompt"]
             if working_dir is not None:
                 request["working_dir"] = str(working_dir)
             secrets = sorted(

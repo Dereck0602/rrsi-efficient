@@ -16,13 +16,16 @@ Use these detailed notes for version boundaries, method settings, source revisio
 
 | Method | Guide |
 | --- | --- |
-| OPRO / GEPA / EvoPrompt / SkillOpt | [Algorithm index and YAML examples](./integrations/algorithms.md) |
-| ACE | [Playbook, modes, and parameters](./ace.md) |
-| Evo-Harness | [Native skill loading and task streams](./evo-harness.md) |
-| AHE | [Edits, audits, and manifest](./ahe.md) |
-| ADAS | [Design archive and reflections](./adas.md) |
+| OPRO | [Scored history and train selection](./opro.md) · [中文](./opro.zh-CN.md) |
+| GEPA | [Per-task frontier, screening, and budgets](./gepa.md) · [中文](./gepa.zh-CN.md) |
+| EvoPrompt | [GA / DE populations and selection](./evoprompt.md) · [中文](./evoprompt.zh-CN.md) |
+| SkillOpt | [Fast / slow updates, selection, and budgets](./skillopt.md) |
+| ACE | [Playbook, modes, and parameters](./ace.md) · [中文](./ace.zh-CN.md) |
+| Evo-Harness | [Native skill loading and task streams](./evo-harness.md) · [中文](./evo-harness.zh-CN.md) |
+| AHE | [Edits, audits, and manifest](./ahe.md) · [中文](./ahe.zh-CN.md) |
+| ADAS | [Design archive and reflections](./adas.md) · [中文](./adas.zh-CN.md) |
 | DarwinX | [Branches, recombination, and admission](./darwinx.md) |
-| Meta-Harness | [File history and candidate search](./meta-harness.md) |
+| Meta-Harness | [File history and candidate search](./meta-harness.md) · [中文](./meta-harness.zh-CN.md) |
 | ModularRSI | [Modules, integration, and evolution data](./modular-rsi.md) |
 | RRSI | [Selection rules, budgets, and costs](./rrsi.md) |
 | Arbor | [Hypothesis tree, trunk adoption, and insight propagation](./arbor.md) |

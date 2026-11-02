@@ -71,5 +71,14 @@ Coordinator 可提出新的替代假设。`done` 只表示得到实验结果，�
   记录包含节点、分数、版本引用和 insight；Worker 轨迹由基类自动记录和脱敏。
 - 本轮新增 18 项 Arbor 行为测试，连同基类、历史搜索和 launcher 回归共 76 项通过；
   文档构建及新 wheel 安装后的 CLI 启动检查通过。这些都不是实际模型 smoke。
-  尚未运行真实模型下的 Arbor 演化，
-  不据此宣称复现原论文收益，也不向已有十二方法的实验结果表添加虚构分数。
+  接入阶段的上述检查不代表真实模型验证；后续 smoke 见下节。
+
+## 真实模型验证
+
+2026-11-01 已保存 Arbor × Codex × WorkBench 的真实模型 smoke，Target 与 Agent Worker 均使用 DeepSeek Flash，train/dev/test 各 1 题，最多 2 次实验。记录覆盖候选资源编辑、train/dev 评估和最终 test，原生数据库状态回放验收通过。
+
+候选未严格提高 dev 分数，最终仍选择初始 Snapshot；test 为 1/1。这是三题流程验证，不能作为完整 WorkBench 准确率、演化收益或论文复现结果，也不并入已有十二方法的实验结果表。
+
+报告还保留了反思误读 Executor 验证范围的问题：部分 insight 声称没有进行模型或 benchmark 评估，但框架已执行并记录候选评估。这可能影响后续规划；评分与 dev 同分拒绝经过独立核验。训练结果变化也不能仅凭假设名称归因于候选宣称的机制。
+
+本地审计来源为 `docs/smoke-arbor-codex-workbench-20261101.json`，状态为 `completed_and_native_replay_verified`；原始报告按仓库规则保存在本地，未纳入公开文档。运行标识为 `arbor-codex-workbench-20261101-010002-416527`。本节依据已有记录更新，无新增模型调用或回放。

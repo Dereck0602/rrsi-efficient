@@ -35,6 +35,12 @@ class LLM(Agent):
             set(_secrets(config) + _secrets(os.environ)), key=len, reverse=True
         )
         messages = [{"type": "RunInput", "prompt": prompt}]
+        request_messages = []
+        if config.get("_worker_system_prompt"):
+            request_messages.append(
+                {"role": "system", "content": config["_worker_system_prompt"]}
+            )
+        request_messages.append({"role": "user", "content": prompt})
         usage = {}
         try:
             if not api_key:
@@ -46,7 +52,9 @@ class LLM(Agent):
                 max_retries=config.get("max_retries", 1),
             ) as client:
                 response = await client.chat.completions.create(
-                    model=model, messages=[{"role": "user", "content": prompt}], **llm
+                    model=model,
+                    messages=request_messages,
+                    **llm,
                 )
             messages.append(
                 {"type": "ChatCompletion", **response.model_dump(mode="json")}

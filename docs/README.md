@@ -128,16 +128,16 @@ policy.
 
 | Method | Scope | Main control | Detailed guide |
 | --- | --- | --- | --- |
-| OPRO | Instructions | Scored history | [Configuration](../examples/opro.yaml) |
-| GEPA | Instructions | Candidate pool and reflection | [Configuration](../examples/gepa.yaml) |
-| EvoPrompt | Instructions | GA / DE population | [Configuration](../examples/evoprompt.yaml) |
-| ACE | Instructions / playbook | Playbook accumulation | [ACE](ace.md) |
-| SkillOpt | Skills | Fast / slow updates | [Quickstart](../examples/quickstart.yaml) |
-| Evo-Harness | Skills | Task-stream accumulation | [Evo-Harness](evo-harness.md) |
-| AHE | Harness resources | Successive edits and audit | [AHE](ahe.md) |
-| ADAS | Harness resources | Design archive | [ADAS](adas.md) |
+| OPRO | Instructions | Scored history | [Guide](opro.md) · [中文](opro.zh-CN.md) · [Configuration](../examples/opro.yaml) |
+| GEPA | Instructions | Candidate pool and reflection | [Guide](gepa.md) · [中文](gepa.zh-CN.md) · [Configuration](../examples/gepa.yaml) |
+| EvoPrompt | Instructions | GA / DE population | [Guide](evoprompt.md) · [中文](evoprompt.zh-CN.md) · [Configuration](../examples/evoprompt.yaml) |
+| ACE | Instructions / playbook | Playbook accumulation | [ACE](ace.md) · [中文](ace.zh-CN.md) |
+| SkillOpt | Skills | Fast / slow updates | [SkillOpt guide](skillopt.md) · [Quickstart](../examples/quickstart.yaml) |
+| Evo-Harness | Skills | Task-stream accumulation | [Evo-Harness](evo-harness.md) · [中文](evo-harness.zh-CN.md) |
+| AHE | Harness resources | Successive edits and audit | [AHE](ahe.md) · [中文](ahe.zh-CN.md) |
+| ADAS | Harness resources | Design archive | [ADAS](adas.md) · [中文](adas.zh-CN.md) |
 | DarwinX | Harness resources | Branches and recombination | [DarwinX](darwinx.md) |
-| Meta-Harness | Harness resources | File-based history | [Meta-Harness](meta-harness.md) |
+| Meta-Harness | Harness resources | File-based history | [Meta-Harness](meta-harness.md) · [中文](meta-harness.zh-CN.md) |
 | ModularRSI | Modules and harness resources | Branch integration | [ModularRSI](modular-rsi.md) |
 | RRSI | Harness resources | Reliability and cost admission | [RRSI](rrsi.md) |
 | Arbor | Harness resources | Hypothesis tree and propagated insights | [Arbor](arbor.md) |

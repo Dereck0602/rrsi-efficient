@@ -18,7 +18,7 @@ next:
   </div>
 </div>
 
-This quickstart runs **SkillOpt with MiniAgent** on 12 bundled SearchQA questions. It uses six questions for train, three for dev, and three for test. You need Python and two model configurations; Docker is not required.
+This quickstart runs **SkillOpt with MiniAgent** on 12 bundled SearchQA questions. It uses six questions for train, three for dev, and three for test. You need Python and two model configurations; Docker is not required. It exercises one fast update; see the [SkillOpt guide](./skillopt.md) for slow updates, selection rules, and budgets.
 
 ## What FlashRSI is
 
@@ -28,7 +28,7 @@ FlashRSI gives research teams one experiment interface for changing agent resour
   <div class="guide-pillar"><strong>Defined scope</strong><p>Algorithms declare which prompts, skills, tools, and runtime files they may edit.</p></div>
   <div class="guide-pillar"><strong>Native execution</strong><p>The full candidate runs through MiniAgent, Claude Code, Codex, Pi, or Hermes.</p></div>
   <div class="guide-pillar"><strong>Shared evidence</strong><p>Snapshots, trajectories, usage, and scores stay under one run directory.</p></div>
-  <div class="guide-pillar"><strong>Broad coverage</strong><p>12 methods and 30 benchmark suites use the same runner.</p></div>
+  <div class="guide-pillar"><strong>Broad coverage</strong><p>13 methods and 30 benchmark suites use the same runner.</p></div>
 </div>
 
 ## Install FlashRSI

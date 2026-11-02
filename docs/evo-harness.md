@@ -1,54 +1,52 @@
-# Evo-Harness 接入
+# Evo-Harness
 
-论文：[Evo-Harness: Context-to-Harness Skill Compilation for Self-Evolving Agents](https://arxiv.org/abs/2608.15071v2)。
-上游：[A-EVO-Lab/a-evolve，release/evo-harness](https://github.com/A-EVO-Lab/a-evolve/tree/release/evo-harness)，
-固定 revision：`3c7c7b8c62a3f07da1d4407aa03f0ca079954bcf`，MIT License。
+**English** · [简体中文](./evo-harness.zh-CN.md)
 
-本接入移植单次在线学习和两级 skill 编译，执行模型权重保持冻结。
-Curator 直接编辑目标 harness 的原生 skill 文件，由目标 Agent 在执行中选择、加载。
-最终产物是普通 Snapshot；保存、恢复后直接 `Agent.rollout()` 即可使用，无需在推理时保留 Algorithm 或 Worker。
+[All algorithms](./integrations/algorithms.md) · [Example configuration](../examples/evo_harness.yaml)
 
-```text
-固定批次 Snapshot → 原生 skill 发现/加载 → 单次执行并评分
-                                              ↓ 失败
-下一批 Snapshot ← 原生文件编译与提交 ← 候选经验反思
+Evo-Harness consumes training tasks once and compiles failures into native skills at two levels: topic-specific procedures and general cross-task guidance. Each batch uses one fixed Snapshot; compilation happens afterward. Valid changes are continuously adopted without a dev gate. The final Snapshot runs through ordinary Agent execution without an optimizer at inference.
+
+## Requirements
+
+The Target must expose `skill` and `config` components and natively discover/load directory skills. The algorithm edits only `skill`; `config` is read-only. Declaring components alone does not add a skill loader to a custom harness.
+
+Train must be non-empty with unique task IDs. The Worker must be a file-editing Agent (`algorithm.worker.type: agent`); a text LLM Worker is rejected at startup. Configure Target and Worker models and connections independently.
+
+There is no dev selection, repeated epoch, or retry of the current task. The runner evaluates the final frozen Snapshot on test. Test feedback is not used for reflection or compilation.
+
+## Run a small example
+
+Follow [Installation](./guide/installation.md). Configure both roles in [examples/quickstart.yaml](../examples/quickstart.yaml), then switch its Worker to an Agent and use its local QA data from the repository root:
+
+```bash
+flashrsi run --config examples/quickstart.yaml \
+  --algorithm evo_harness \
+  --algorithm.worker.type agent \
+  --algorithm.worker.name miniagent \
+  --algorithm.worker.max_turns 10 \
+  --algorithm.batch_size 3 \
+  --algorithm.max_steps 2 \
+  --algorithm.general_min_tasks 3
 ```
 
-## 学习流程
+This consumes the six bundled train tasks in two batches, allowing observation of skill reuse by a later batch. It does not guarantee compilation: a batch needs usable failure memories, and a revised general skill needs at least three distinct supporting tasks here. Append `--check-only` for initialization without model calls; it does not verify model authentication or skill use.
 
-- 按 benchmark 提供的 train 顺序消费一次；`batch_size` 划分批次，`max_steps` 限制批次数。
-  不重复 epoch、不重试当前任务，也不在 dev 上选择版本。
-- 同一批任务共用一个 Snapshot；整批完成后才反思、编译与更新。
-- 仅对执行失败或低于 `success_threshold` 的结果反思。Worker 读取已完成的训练轨迹和反馈，
-  返回 `lesson / trigger / evidence / scope_hint`，也可返回 `{"skip": true}`。
-  使用基类证据处理，移除 RunConfig，截断时标记。
-- Topic Curator 编译任务类型或接口相关程序；General Curator 比较本批经验，提取跨任务模式。
-  两个角色依次调用同一个 Worker 的 `edit()`，通过原生文件工具创建、合并、修订或删除 skill。
-- 每个新增或修订的版本只引用本批支持它的候选经验；general skill 至少引用
-  `general_min_tasks` 个不同任务。旧版本的来源保存在 Snapshot 历史中，不能自动充当新规则的证据。
-  未修改的 skill 保留来源。代码检查 ID 约束，共享模式的语义判断交给 Curator。
-- 每级编辑作为一次原子提交处理：权限、来源、层级、数量或字符预算不合法则整级拒绝。
-  原生无关 skill 按基线归属保护，不能添加 provenance 接管；也不能通过剥离 provenance
-  留下未受管的程序。层级与来源检查依据真实 Snapshot 差异，额外 frontmatter 修改也会被检查。
-  合法更新持续采用，不以 dev 或在线分数提升作为接受门槛。
-- 记录的是每次更新前的在线成绩；runner 再对最终冻结 Snapshot 做独立 test。
-  test 使用基类评分路径，不参与反思和编译。
+The dedicated [Evo-Harness configuration](../examples/evo_harness.yaml) also uses MiniAgent for both roles. See [Configuration & CLI](./guide/configuration.md) and [harness integrations](./integrations/harnesses.md) when changing providers or harnesses.
 
-## 复用与资源布局
+## Search and selection
 
-不新增核心接口或版本管理类。实现复用 `Algorithm._evaluate/_record/_evidence/_trajectory_evidence`、
-`Worker.ask/edit` 和 `Snapshot.check_out/commit`；权限、凭据脱敏、工作目录清理由现有框架负责。
-算法只可写 `skill`，`config` 仅供读取。配置、prompt、runtime 和组件声明的保护
-复用 Snapshot 的组件权限，不再定义算法自己的激活声明、配置字段协议或加载依赖映射。
-原生无关 skill 按已有文件的归属保护；新目录不能遮蔽同名的平铺 skill。
-来源、层级、预算检查留在算法中；发现和加载留在原生 harness 中。
-这些检查不执行候选程序、不调用模型，也不引入成绩接受门槛。
+1. Consume train in its supplied order, limited by `max_steps` batches. Execute every task in a batch with the same current Snapshot and record scores before updates.
+2. Reflect only on unfinished tasks or scores below `success_threshold`. The Worker receives recorded training evidence and returns `lesson`, `trigger`, `evidence`, and `scope_hint`, or `{"skip": true}`. Invalid memory JSON or required fields produce a decline record.
+3. If usable memories exist, call the Topic Curator and then the General Curator through the same Worker's `edit()`. They create, merge, revise, or delete native skill files. The second level starts from the first level's accepted result.
+4. Validate each level's committed changes against component permissions, ownership, provenance, level, and library budgets. Reject that entire level on invalid edits; a rejected general edit does not undo an already-accepted topic edit.
+5. Adopt legal resource changes without comparing dev or online scores. The next batch uses the updated Snapshot; unchanged edits do not activate a new version.
+6. Record `online_score` and `online_tasks`, then return current for final test.
 
-受管 skill 使用原生目录和 YAML frontmatter，例如：
+`online_score` averages the one-time pre-update training outcomes. It measures a changing agent along the stream, not the final frozen agent's test performance. Keep it separate from `test_score`.
 
-```text
-skills/verify-evidence/SKILL.md
-```
+## What changes in a skill
+
+Managed skills use native directories such as `skills/verify-evidence/SKILL.md`, with YAML frontmatter followed by a non-empty body that may contain code blocks:
 
 ```yaml
 ---
@@ -61,71 +59,50 @@ flashrsi:
 ---
 ```
 
-其后是可包含代码块的程序正文。`name/description` 用于原生发现，`flashrsi` 保存编译来源。
-历史上将 JSON 库嵌入 prompt 的实验产物不属于此文件协议，需重新演化。
+`name` and `description` support native discovery; `flashrsi` records ownership, level, and source tasks. Each new or revised skill must cite usable memories from the current batch. A general skill needs `general_min_tasks` distinct source IDs. Old evidence does not automatically justify a new revision; unchanged skills retain their provenance in the library and Snapshot history.
 
-- **Claude Code**：复用原生 plugin skill 发现和 Skill 工具。若显式限制工具，需允许 `Skill`。
-  默认原生 system prompt 保留，Curator 无需修改 CLAUDE.md。
-- **MiniAgent**：保留 `agent.yaml.skills` 对已有 `skills/<name>.md` 的全文内联行为。
-  原生 workspace loader 自动发现 `skills/<name>/SKILL.md`，存在目录技能时自动提供
-  `read_skill`；添加、删除技能只需编辑文件，无需同步修改配置。目录技能只向首次请求
-  提供 description，模型按需读取正文，来源元数据不进入正文。
-  无目录技能时保持原有工具列表；显式启用的工具仍由原生配置控制。
-  实现细节见 [harness 接入说明](agent-integration.md)。
+Each Curator may edit only its requested level. Existing unmanaged skills cannot be taken over by adding provenance or changed as collateral edits. Removing provenance, omitting it from new files, or shadowing a flat native skill with a new directory skill is rejected. Checks inspect actual Snapshot changes, including frontmatter changes. They validate structure and source IDs, not the semantic truth or generality of a lesson.
 
-Algorithm 不按 harness 或 benchmark 名称分支；Curator 根据 checkout 识别原生布局。
-两类目标都通过普通执行路径消费最终文件。自定义 harness 需具备相应的原生 skill 能力；
-本实现不会自动为自定义 runtime 添加加载器。仅声明 skill 组件不代表拥有发现能力；
-使用自定义来源时，应先验证普通 Agent 能消费其目录技能。
+MiniAgent retains its configured flat-skill loading and discovers directory `SKILL.md` files through the workspace loader, exposing `read_skill` for on-demand bodies. Claude Code uses native plugin discovery and its `Skill` tool; explicit tool allowlists must permit `Skill`. Curators do not need to modify configuration or `CLAUDE.md`. See [Agent integration](./agent-integration.md).
 
-## 参数与运行
+Worker execution failures propagate. Invalid memories can be skipped, and invalid compiled edits are declined. The algorithm does not execute candidate skill programs as part of validation; their behavior is exercised through later native Agent runs.
 
-见 [示例配置](../examples/evo_harness.yaml)。Worker 必须是能编辑目录的 Agent；
-`algorithm.worker.type: llm` 在启动时报错。目标和 Worker 的模型、连接配置分别填写。
+## Parameters and cost
 
-| 参数 | 默认值 | 用途 |
+These implementation defaults belong under `algorithm`.
+
+| Field | Default | Meaning |
 | --- | --- | --- |
-| `batch_size` | 4 | 每次固定版本消费的任务数 |
-| `max_steps` | null | 最多消费的批次数；null 表示完整 train 流 |
-| `success_threshold` | 1.0 | 低于此分数的训练执行需要反思 |
-| `general_min_tasks` | 3 | 每个新增/修订 general 程序所需的本批任务数 |
-| `max_general_skills` | 10 | general 库数量上限 |
-| `max_topic_skills` | 30 | topic 库数量上限 |
-| `max_skill_chars` | 2000 | 单条正文字符上限 |
-| `max_library_chars` | 48000 | 库的规范化 YAML 元数据和正文总字符上限 |
-| `max_evidence_chars` | 24000 | 反思及编译证据字符上限 |
+| `batch_size` | `4` | Tasks sharing one Snapshot per batch; at least 1. |
+| `max_steps` | `null` | Batch limit; positive integer or the entire train stream. |
+| `success_threshold` | `1.0` | Reflect on unfinished tasks or scores below this value. |
+| `general_min_tasks` | `3` | Distinct current-batch sources per new/revised general skill; at least 2. |
+| `max_general_skills` | `10` | Managed general-skill count limit; at least 1. |
+| `max_topic_skills` | `30` | Managed topic-skill count limit; at least 1. |
+| `max_skill_chars` | `2000` | Character limit per managed skill body; at least 1. |
+| `max_library_chars` | `48000` | Total normalized YAML serialization size of managed skill records, including content; at least 1. |
+| `max_evidence_chars` | `24000` | Evidence character limit for reflection and compilation; at least 1. |
 
-```bash
-uv run --extra all flashrsi run --config examples/evo_harness.yaml
-```
+If `batch_size < general_min_tasks`, no new or revised general skill can meet the evidence requirement. Even a large enough batch may contain too few usable failure memories.
 
-默认采用保守的本批证据约束；`batch_size < general_min_tasks` 时无法新增或修订 general 程序。
-若一个批次的失败经验不足，General Curator 应保留已有程序。
+Each consumed train task runs once. Each failing result makes one reflection call, and a batch with at least one usable memory makes two directory-edit calls. Native Agent turns within those calls and final test are additional costs. Library budgets constrain compiled artifacts, not the number or size of skills loaded into a task's context.
 
-## 与上游的取舍
+## Inspect an experiment
 
-- 反思由独立 Worker 读取记录上下文，未续接 solver 的原生会话。
-- 选择与加载交给原生 solver，而非独立 Selector 调用；没有算法级的注入数量或字符硬预算。
-  因此移除了 `max_injected_skills/max_injected_chars`，库预算约束编译产物，不约束每次执行上下文。
-- Curator 直接写原生文件，取代 JSON 操作协议及临时执行 Snapshot，保证最终 Snapshot 可独立执行。
-- 来源门槛按当前修订版本的本批支持证据计算，不继承旧规则的证据计数。
+`declined` records distinguish `memory` parsing failures from `compile` validation failures. A `compile` decision includes `level`, `step`, parent/candidate IDs, `changed_paths`, and `accepted`. Acceptance means legal changes were adopted, not that performance improved. An unchanged compile has `accepted: false`.
 
-这些取舍复用 FlashRSI 的执行和版本设计，也改变了选择与编译协议；本实现属于流程移植，
-不能直接等同于论文的完整复现或比较论文成绩。
+The final `stream` decision identifies the retained Snapshot and online metric. To assess reuse, inspect a later batch or frozen test for native skill discovery and actual loading; displaying a description alone does not prove the body was used.
 
-## 验证
+## Source and adaptation
 
-```bash
-uv run pytest tests/test_evo_harness.py tests/test_evo_harness_validation.py tests/test_evo_harness_native.py tests/test_miniagent_skills.py
-```
+The [implementation](../flashrsi/algorithms/evo_harness/__init__.py) pins `A-EVO-Lab/a-evolve`, branch `release/evo-harness`, to `3c7c7b8c62a3f07da1d4407aa03f0ca079954bcf`, with paper identifier `2608.15071v2`. [Prompts](../flashrsi/algorithms/evo_harness/_prompts.py) define reflection and compilation roles.
 
-专项覆盖一次消费、批内固定版本、失败反思、两级编译、采用合法退步版本、来源门槛、原子拒绝、
-保存恢复、嵌套代码块、原生按需加载、可选工具和 Worker 错误传播。
-原生集成测试通过真实 MiniAgent 子进程/OpenAI SDK、Claude SDK/CLI 与本地模拟服务，
-验证 Worker 文件工具提交，以及恢复后的 Agent 直接 rollout；模拟成绩只验证接入行为。
+The port reflects from recorded context rather than continuing the solver session. Native skill selection/loading replaces a separate Selector call; Curators edit native files instead of a JSON operation library embedded into a prompt. Final Snapshots are independently runnable. Historical prompt-embedded JSON libraries do not satisfy this file protocol and require re-evolution. Current-revision evidence comes from the current batch rather than inherited source counts. These changes preserve the workflow but do not reproduce the complete upstream experiment.
 
-尚未运行远程真实模型、真实容器 benchmark 或论文分数复现。
+## Validation scope
 
-代码入口为 `evo_harness/__init__.py`；只另保留与仓库其他算法一致的 `_prompts.py`。
-技能解析和预算由算法私有 `_skills()` 承担，提交的归属、层级和来源检查直接在
-`_compile()` 中完成。
+[Behavior tests](../tests/test_evo_harness.py) and [validation tests](../tests/test_evo_harness_validation.py) cover native-file curation and ownership/provenance boundaries. Local historical report `docs/smoke-evoharness-20261023.json` records MiniAgent × HotpotQA as `flow_passed_with_quality_limits`. A three-task training batch exercised topic and general compilation; earlier all-success batches did not compile anything.
+
+The report found retained training-specific answer content, showing that schema checks do not enforce semantic generalization. The run had no later train batch to demonstrate reuse, and final test displayed skill descriptions without calling `read_skill`. A separate loading probe is not end-to-end task-use evidence.
+
+These are scoped observations from a local ignored report, not a public result link or an exhaustive coverage claim. This documentation update adds no model calls. Report native loading, changed files, evidence sources, compilation levels, and online/test metrics separately; no performance gain follows from successful compilation alone.

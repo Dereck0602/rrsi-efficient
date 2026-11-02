@@ -1,143 +1,111 @@
-# ACE 迁移
+# ACE
 
-ACE 采用 Generator → Reflector → Curator 流程，支持 offline 与 online 两种模式，
-复用 Algorithm、Snapshot、Worker 和 runner。
+**English** · [简体中文](./ace.zh-CN.md)
 
-## 入口和执行流程
+[All algorithms](./integrations/algorithms.md) · [Example configuration](../examples/ace.yaml)
 
-- 主循环：[algorithms/ace/__init__.py](../flashrsi/algorithms/ace/__init__.py)。
-- 私有 playbook 协议：[\_playbook.py](../flashrsi/algorithms/ace/_playbook.py)。
-- 角色提示：[\_prompts.py](../flashrsi/algorithms/ace/_prompts.py)。
-- 小规模配置：[examples/ace.yaml](../examples/ace.yaml)。
+ACE grows a playbook through a Generator → Reflector → Curator loop. Valid additions and usage-counter changes are adopted immediately, allowing learning to continue through score regressions. Offline mode periodically measures dev and returns the best measured version; online mode retains the final accumulated playbook.
 
-先在 YAML 中分别填写 target 与 Worker 的模型、凭据及连接地址，再运行：
+## Requirements
 
-```bash
-uv sync --extra all
-uv run flashrsi run --config examples/ace.yaml
-```
+The Target must declare an `instruction_file` in its `prompt` component. The Worker can be a text LLM or an Agent: both reflection and curation use `ask()` replies, not directory editing.
 
-默认安装已包含 Claude Code 依赖。使用该目标时将 `agent.name` 改为 `claude_code`，
-并为 `agent.llm` 单独配置 Anthropic 兼容模型及端点。Worker 仍可使用纯 LLM；
-也可按现有配置选择 Agent Worker。算法通过 `worker.ask()` 获取文本。
+Train must be non-empty; offline also requires dev. Environment tasks with `Task.env` set require `max_reflection_rounds: 1`. Multi-round retries prepend a diagnosis to the question; there is no generic environment-injection protocol, so that combination is rejected at startup.
 
-1. offline 评估初始版本的 dev 分数，作为 best；online 不做这一步。
-2. 每个 epoch 遍历 train，按 batch 执行当前版本。
-   offline 用 `seed + epoch` 打乱；online 按原顺序流式消费。
-3. Reflector 读取训练输入、答案、输出、状态、主指标等评分与错误信息。正确答案也反思。
-   未达 `success_threshold` 且有剩余反思轮数时，把本次诊断加到原问题前重试；
-   不修改 Snapshot，也不累积前几轮的诊断。Curator 读取最后一次诊断及其对应轨迹。
-4. 把 helpful/harmful 标签写回对应 bullet 的计数；neutral 不改变计数。
-5. 按 `curator_frequency` 调用 Curator。只接受 ADD；系统分配编号、按 section 插入，
-   对规范化后的相同内容去重。合法增量立即成为 current，无逐步 dev 接受门槛。
-   格式错误、非 ADD、超出条数或体积预算的提案被拒绝并记录，最近 4 次拒绝供后续 Curator 参考。
-6. offline 每 `eval_steps` 个训练 batch 评估 dev，无论该步是否调用或接受 Curator。
-   只有严格提升才改变 best。结束时补评尚未验证的 current，并切换到 best 的原 Snapshot。
-   online 不评估 dev，也不恢复 best，直接保留流式演化出的版本。
-7. runner 只在演化结束后评估 test；dev/test 轨迹不会交给 Reflector 或 Curator。
+Both modes provide training `ground_truth` to the Reflector when available; online is not an unlabeled online reproduction. Dev/test trajectories do not reach the Reflector or Curator. The runner owns final test evaluation.
 
-## offline 与 online
+## Run a small example
 
-两种模式共用同一套 Reflector/Curator、ADD 协议、计数和持续应用；差别只在结束时如何交账。
-
-| | offline | online |
-| --- | --- | --- |
-| train 顺序 | 每个 epoch 按 `seed + epoch` 打乱 | 保持原顺序，消费一次 |
-| dev | 初始评估 + 按 `eval_steps` 周期评估 | 不访问；可以为空 |
-| 最终版本 | 恢复 dev 最佳 Snapshot | 保留最后的 current |
-| 算法自报分数 | `decision` 记录的 `kind: "promote"`、`score`（best 的 dev 分） | `decision` 记录的 `kind: "stream"`、`online_score` 与 `online_tasks` |
-
-online 的「先预测和计分、后更新」在代码中只有一处：每个 batch 执行后立刻记录其主指标，
-再进入 Reflector。因此 `online_score` 是各任务**第一次**遇到时、由当时那版 playbook
-得到的分数；反思重试的分数、以及后续 playbook 的分数都不计入。这是流式累积指标，
-不是 held-out 结果。
-
-`online_score` 与 runner 最后写入 `result.json` 的 `test_score` 是两个不同口径：
-前者来自 train 流的一次性执行，后者是最终版本在 test 上的独立评估。两者不可互相替代，
-也不能相加或比较。
-
-反馈边界与 offline 一致：Reflector 读到 `ground_truth`。
-train 划分本来就带标签，两种模式共用同一份 evidence 渲染，算法不按模式分叉 prompt。
-复现论文的无标签在线设定需要单独设计 evidence 协议，当前未实现。
-
-## Playbook 如何加载
-
-ACE 读 target 声明的 `instruction_file`，要求它属于 `prompt` 组件。
-保留该文件原始前缀，在 `<!-- flashrsi:ace-playbook -->` 标记之后维护结构化 playbook。
-空更新不会创建文件或新 Snapshot。重新使用已有 ACE 版本时读取原有后缀，不重复追加标记。
-其他文件保持原样，新增能力不要求 harness 声明新的公开字段。
-
-- MiniAgent：追加到 `prompts/system.md`，由原生运行时加载。
-- Claude Code：创建或追加 `CLAUDE.md`，由既有 SDK 适配层通过 `system_prompt.append` 加载，
-  保留原生 `claude_code` system prompt。
-
-旧版默认演化 skill；Lite 此处使用 prompt，是为了让每次目标执行都收到 playbook，
-避免依赖模型是否主动调用某个 skill。算法本身没有 harness 名称或文件布局分支。
-原有指令中的普通列表不自动转换为 ACE bullet；计数与去重只处理管理后缀内的条目。
-
-## 参数
-
-| algorithm 字段 | 默认值 | 含义 |
-| --- | --- | --- |
-| `mode` | `offline` | `offline` 或 `online`；决定整套结束策略 |
-| `num_epochs` | 1 | train 遍历次数 |
-| `batch_size` | 1 | 每次 Generator 处理的任务数 |
-| `max_steps` | null | batch 数上限，不是模型调用次数；正整数或 null |
-| `edit_budget` | 4 | 一次 Curator 提案的最大 ADD 数，去重前检查 |
-| `eval_steps` | 100 | 按训练 batch 计数的 dev 评估间隔；online 不使用 |
-| `max_reflection_rounds` | 3 | 每批最多反思轮数；最多重试轮数为此值减一 |
-| `curator_frequency` | 1 | 每隔多少 batch 调用 Curator；只策展当前批的最后诊断 |
-| `playbook_token_budget` | 80000 | 按 `ceil(字符数 / 4)` 估算的 playbook 体积上限；不是实际 tokenizer 限额，不含原指令 |
-| `success_threshold` | 1.0 | 批内全部任务 finished 且主指标达到此值时停止重试 |
-| `max_evidence_chars` | 24000 | 每次角色提示中训练证据的字符上限 |
-| `seed` | 42 | offline 的 epoch 内 shuffle 种子；online 不使用 |
-
-两种模式都要求 train 非空；offline 另外要求 dev 非空。
-对 `Task.env` 不为空的环境任务，当前没有通用的反思上下文注入协议，
-因此启用多轮重试会在启动时报错；设 `max_reflection_rounds: 1` 可使用已有环境执行适配，
-具体的 ACE × 环境 benchmark 组合仍需端到端验证。
-
-## 来源与迁移差异
-
-直接参考旧版 FlashRSI commit `5efe9b438483710060183c6c3ecbc5062b410a58` 的
-`src/flashrsi/algos/ace/{algorithm,playbook,prompts}.py` 与 `tests/test_ace_opro.py`。
-其 `core/recipes.py` 锁定的上游为
-[ace-agent/ace](https://github.com/ace-agent/ace/tree/82709de050e1db6e6ef2f07bcb0393560b94992a)，
-commit `82709de050e1db6e6ef2f07bcb0393560b94992a`。
-本实现依据旧实现迁移；尚未独立核验该上游 commit，不声称逐行复现论文实现。
-
-保留 ADD-only、section/编号/计数、精确文本去重、Reflector/Curator、持续应用、周期 dev
-和 best 恢复；未引入旧 Trainer、Recipe、State/checkpoint 管理体系，无额外生产依赖。
-当前未实现断点恢复、语义去重、playbook 压缩或完整 reasoning 事件渲染。
-
-与旧实现的具体差异：
-
-- playbook 进入目标声明的指令文件，而不是旧版 `component_id` 指定的 skill。
-- 为 Reflector 提供训练 `ground_truth`（可为空）；旧版提示要求分析标准答案但 evidence 没有输出该字段。
-- 最后一轮反思后不再额外重试，使诊断与供 Curator 读取的轨迹一致；原始 Task 保持不变。
-- dev 评估按训练步调度，不再嵌在成功 ADD 的分支中；只有计数变化的版本也能被验证。
-- 最终通过现有 Snapshot 指针恢复 best，保留沿途的 Snapshot 和决策记录，不复制出一个新版本。
-- 多行 ADD 内容收为一条 bullet，系统始终分配 ID 和初始计数；不会接受模型伪造的编号。
-- 空操作、重复 ADD、未知/neutral 标签均保持文本和版本不变。
-- online 不打乱 train，并显式记录流式累积分数。旧版 online 仍复用 offline 的 shuffle，
-  也没有单独上报在线指标，因而无法与最终 test 区分口径。
-
-## 验证状态
-
-- CLI `--algorithm.mode online` 正确写入 resolved config；`--algorithm.mode stream`
-  由基类 `_ranges` 在启动时拒绝，不执行任务或模型调用。
+Follow [Installation](./guide/installation.md). Independently configure both roles in [examples/quickstart.yaml](../examples/quickstart.yaml), then use its local QA data from the repository root:
 
 ```bash
-uv run pytest tests/test_ace.py tests/test_ace_native.py
+flashrsi run --config examples/quickstart.yaml \
+  --algorithm ace \
+  --algorithm.mode offline \
+  --algorithm.num_epochs 1 \
+  --algorithm.max_steps 2 \
+  --algorithm.eval_steps 1 \
+  --algorithm.max_reflection_rounds 1
 ```
 
-机制测试覆盖持续应用、跨越降分、恢复最佳/平分保留、批次上限、反思隔离、计数、周期验证、
-拒绝反馈、预算与协议、无操作、Worker 错误及记录持久化；online 另外覆盖不验证 dev、
-保留降分版本、先计分后更新、顺序消费与空 dev 划分。
-本地集成测试通过 runner、真实 MiniAgent 子进程/OpenAI SDK、真实 Claude SDK/CLI，
-使用本地模拟模型服务和 SearchQA fixture；验证 playbook 出现在实际请求中、候选评分改变、
-最终 test、脱敏配置、Snapshot 与汇总保存。online 的 runner 测试另外验证不产生 dev 评估记录，
-且 `online_score` 与 `test_score` 是两个独立数字。
+For ordered online consumption:
 
-**尚未运行远程真实模型 smoke、HotpotQA 组合或全量实验；这里的模拟分数仅验证接入机制，
-不代表演化效果。**
+```bash
+flashrsi run --config examples/quickstart.yaml \
+  --algorithm ace \
+  --algorithm.mode online \
+  --algorithm.num_epochs 1 \
+  --algorithm.max_steps 2 \
+  --algorithm.max_reflection_rounds 1
+```
+
+These commands inherit `batch_size: 2` and `edit_budget: 1`. Append `--check-only` for initialization without model calls or remote authentication checks. The dedicated [ACE configuration](../examples/ace.yaml) enables two reflection rounds. See [Configuration & CLI](./guide/configuration.md) for credentials and overrides.
+
+## Search and selection
+
+1. Load the managed playbook suffix. Offline evaluates the initial Snapshot on dev.
+2. Execute a training batch with current. Online records its initial-attempt scores before reflection, retries, or updates.
+3. Reflect on outputs, scores, status, errors, and reference answers, including correct attempts. If any task is unfinished or below `success_threshold`, retry while reflection rounds remain. Each retry uses the original question plus only the latest diagnosis, with the same Snapshot. The Curator receives the last diagnosis and its corresponding attempt.
+4. Apply helpful/harmful bullet tags to counters and immediately adopt any changed tally. Neutral and unknown tags do not change counters.
+5. Every `curator_frequency` batches, request ADD operations from that batch's last diagnosis and evidence. Adopt valid changes without a score gate. Invalid operations and size/budget violations are declined; the last four declines inform later curation.
+6. Offline evaluates dev every `eval_steps` batches, even when curation was skipped or declined. Only a strictly higher score replaces the stored best. At the end, evaluate current if it differs from the last validated version, then restore the best measured Snapshot.
+7. Online skips dev and restoration, returning current. The runner evaluates the selected Snapshot on test.
+
+### Offline and online
+
+| Behavior | Offline | Online |
+| --- | --- | --- |
+| Order | Shuffle with `seed + epoch` | Preserve order within each pass |
+| Passes | `num_epochs` | Current implementation also uses `num_epochs`; set 1 for a single pass |
+| Dev | Initial, scheduled, and final when needed | Not accessed; can be empty |
+| Final version | Best measured dev Snapshot | Last accumulated Snapshot |
+| Summary | `promote` with dev `score` | `stream` with `online_score` and `online_tasks` |
+
+`online_score` averages each consumed task occurrence's initial attempt before its batch updates the playbook. Retries are excluded. With `num_epochs > 1`, tasks are consumed and counted again; use `num_epochs: 1` for single-pass reporting. This stream metric and final `test_score` measure different behavior and must be reported separately.
+
+## What changes in the playbook
+
+ACE preserves the instruction prefix and manages only the suffix after `<!-- flashrsi:ace-playbook -->`. Existing suffixes are reused; ordinary lists in the original instructions are not converted into managed bullets. No-op updates create no resource change.
+
+Curation is ADD-only. The implementation assigns sectioned IDs and initial counters, collapses multiline content into one bullet, and deduplicates after whitespace normalization and case folding. The edit limit is checked before deduplication. Unrecognized new sections fall back to `others`, except `general`. Models cannot assign authoritative bullet IDs.
+
+MiniAgent loads the playbook through its native instruction file; Claude Code appends it through `CLAUDE.md` while retaining its native system prompt. The algorithm does not branch on harness names. See [Agent integration](./agent-integration.md).
+
+Recognized Worker turn, time, or token exhaustion is recorded as `worker_budget_exhausted`. A missing reflection supplies neither tags nor Curator input. A failed curation preserves current, including any already-adopted tally. Other Worker failures propagate. Semantic deduplication, playbook compression, and evolution checkpoint-resume are not implemented.
+
+## Parameters and cost
+
+These implementation defaults belong under `algorithm`.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `mode` | `offline` | `offline` or `online`; determines validation and selection. |
+| `num_epochs` | `1` | Train passes in either mode; integer, at least 1. |
+| `batch_size` | `1` | Training tasks per batch; at least 1. |
+| `max_steps` | `null` | Total batch limit; positive integer or `null`. |
+| `edit_budget` | `4` | ADD limit per curation before deduplication; at least 1. |
+| `eval_steps` | `100` | Offline dev interval in training batches; at least 1. |
+| `max_reflection_rounds` | `3` | Diagnoses per batch, with at most one fewer retries; at least 1. |
+| `curator_frequency` | `1` | Curate every this many batches; at least 1. |
+| `playbook_token_budget` | `80000` | Approximate suffix limit: `ceil(characters / 4)`, excluding the original prefix; at least 1. |
+| `success_threshold` | `1.0` | All tasks must finish and score at least this value to stop retries. |
+| `max_evidence_chars` | `24000` | Serialized training evidence character limit; at least 1. |
+| `seed` | `42` | Integer offline shuffle seed; online does not shuffle. |
+
+A batch can execute its tasks up to `max_reflection_rounds` times and make that many reflection calls, plus a scheduled Curator call. Offline adds initial, periodic, and possibly final dev passes. `max_steps` is not a model-call budget; `playbook_token_budget` is not a tokenizer measurement.
+
+## Inspect an experiment
+
+`tally` and `curate` decisions with `accepted: true` mean immediate adoption, not dev improvement. `declined` identifies invalid curation or recognized Worker budget exhaustion. Offline ends with `promote`; online ends with `stream`. Read Snapshot IDs to distinguish the last learned version from the selected best, and report final test separately.
+
+## Source and adaptation
+
+The [implementation](../flashrsi/algorithms/ace/__init__.py) and [playbook protocol](../flashrsi/algorithms/ace/_playbook.py) name FlashRSI commit `5efe9b438483710060183c6c3ecbc5062b410a58` as the port reference and `ace-agent/ace` commit `82709de050e1db6e6ef2f07bcb0393560b94992a` as upstream. The original migration record did not independently verify that upstream revision; this guide describes local behavior.
+
+Local choices include an instruction suffix instead of a skill, explicit training answers in evidence, retries only between diagnoses, dev scheduling independent of successful ADDs, and restoration through the existing Snapshot. No separate Trainer/Recipe/checkpoint layer is introduced. [Prompts](../flashrsi/algorithms/ace/_prompts.py) define reply protocols.
+
+## Validation scope
+
+[Selection tests](../tests/test_ace_selection.py) cover offline incumbent retention, including ties. Local historical report `docs/smoke-banking-bm25-steps100-ace-miniagent-20261028.json` records ACE × MiniAgent × τ³ Banking as `flow_passed`, with train, dev, Worker, and test records. Dev and test rewards were zero; completion does not establish improvement or online-mode coverage.
+
+The report is a local ignored artifact, not a public result link. This documentation update makes no new model calls. Report mode, passes, reflection/retry coverage, curation decisions, and final selection; simulated tests and initialization do not replace a real combination run.

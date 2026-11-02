@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from flashrsi._records import _config_record
+from flashrsi._worker_prompt import instructions
 from flashrsi.config import Config, _ConfigLoader, _validate_role_config
 from flashrsi.core.benchmark import Task
 from flashrsi.core.snapshot import (
@@ -170,7 +171,22 @@ class Agent:
         trajectory reaches an experiment's records and how credentials are
         redacted from the error -- a single Agent holds only its own.
         """
-        result = await self.run(prompt, working_dir)
+        # Worker is an operation, not a permanent role on a reusable Agent.
+        # Keep its instructions in this call's config, outside Snapshot files.
+        config = copy.deepcopy(self.config)
+        config["_worker_system_prompt"] = instructions(editing=working_dir is not None)
+        active = self._execution.get()
+        token = self._execution.set(
+            _Execution(
+                active.snapshot if active is not None else self._snapshot,
+                active.files_dir if active is not None else None,
+                config,
+            )
+        )
+        try:
+            result = await self.run(prompt, working_dir)
+        finally:
+            self._execution.reset(token)
         detail = result.error_message
         if self._observer is not None:
             detail = self._observer(prompt, result)
