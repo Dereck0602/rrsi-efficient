@@ -54,6 +54,7 @@
 
 ## Features
 
+
 - 🧩 **Configurable Experiment Framework**: Combines an RSI method, Target harness, Worker, benchmark,
   and independent model settings in one YAML/CLI experiment. Resource scopes and execution roles can
   change without writing a new runner.
