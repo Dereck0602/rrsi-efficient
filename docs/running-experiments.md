@@ -2,7 +2,7 @@
 
 [README](../README.md) · [Benchmark configurations](benchmark-quickstart.md) · [Launcher guide](experiment-launcher.zh-CN.md)
 
-FlashRSI registers 13 algorithms, 30 benchmark suites, and five harnesses: MiniAgent, Claude Code, Codex, Pi, and Hermes. Versions, years, and task domains within one adapter count as one suite. Registration does not mean every combination has completed a real model run.
+FlashRSI registers 13 algorithms, 30 benchmark suites, and seven harnesses: MiniAgent, Claude Code, Codex, Pi, Hermes, OpenClaw, and OpenCode. Versions, years, and task domains within one adapter count as one suite. Registration does not mean every combination has completed a real model run.
 
 ## Start with a small run
 

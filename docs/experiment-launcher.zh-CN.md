@@ -3,7 +3,7 @@
 [返回首页](../README.zh-CN.md) · [使用指南](usage.zh-CN.md)
 
 FlashRSI 用同一套实验入口连接 Algorithm、Benchmark 和 Agent，记录演化版本、逐题轨迹与最终 test 结果。
-当前注册 13 个算法、5 个 Target Agent、30 个 Benchmark；接入范围及各项额外配置见
+当前注册 13 个算法、7 个 Target Agent、30 个 Benchmark；接入范围及各项额外配置见
 [Benchmark 配置索引](benchmark-quickstart.md)。注册数量不表示所有组合均已通过真实运行。
 
 首次体验也可使用附带 12 道题的 [quickstart_launch.yaml](../examples/quickstart_launch.yaml)，无需下载 SearchQA 全量数据。Codex 的额外工具链和 Responses API 要求见 [Codex 指南](codex.md)。

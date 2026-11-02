@@ -26,9 +26,9 @@ FlashRSI gives research teams one experiment interface for changing agent resour
 
 <div class="guide-pillars">
   <div class="guide-pillar"><strong>Defined scope</strong><p>Algorithms declare which prompts, skills, tools, and runtime files they may edit.</p></div>
-  <div class="guide-pillar"><strong>Native execution</strong><p>The full candidate runs through MiniAgent, Claude Code, Codex, Pi, or Hermes.</p></div>
+  <div class="guide-pillar"><strong>Native execution</strong><p>The full candidate runs through MiniAgent, Claude Code, Codex, Pi, Hermes, OpenClaw, or OpenCode.</p></div>
   <div class="guide-pillar"><strong>Shared evidence</strong><p>Snapshots, trajectories, usage, and scores stay under one run directory.</p></div>
-  <div class="guide-pillar"><strong>Broad coverage</strong><p>12 methods and 30 benchmark suites use the same runner.</p></div>
+  <div class="guide-pillar"><strong>Broad coverage</strong><p>13 methods and 30 benchmark suites use the same runner.</p></div>
 </div>
 
 ## Install FlashRSI
