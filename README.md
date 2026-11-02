@@ -7,8 +7,8 @@
 <p align="center"><i>One click to reproduce, compare, and develop RSI methods across agents and tasks.</i></p>
 
 <p align="center">
-  FlashRSI provides one experiment interface for <b>13 RSI algorithms</b>, <b>30 benchmarks</b>, and native
-  integrations for MiniAgent, Claude Code, Codex, Pi, and Hermes. Each run records the resources that changed,
+  FlashRSI provides one experiment interface for <b>13 RSI algorithms</b>, <b>30 benchmarks</b>, and <b>7 harness integrations</b>:
+  MiniAgent, Claude Code, Codex, Pi, Hermes, OpenClaw, and OpenCode. Each run records the resources that changed,
   trajectories that produced the score, and the Snapshot selected at the end.
 </p>
 

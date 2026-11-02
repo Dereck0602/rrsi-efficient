@@ -7,7 +7,7 @@
 <p align="center"><i>一键在不同 Agent 与任务上复现、比较和开发 RSI 方法。</i></p>
 
 <p align="center">
-  FlashRSI 集成 <b>13 种 RSI 算法</b>、<b>30 个 benchmark</b> 和 <b>5 个 harness</b>（MiniAgent、Claude Code、Codex、Pi、Hermes），用于复现、比较和开发 Agent 自我改进方法。
+  FlashRSI 集成 <b>13 种 RSI 算法</b>、<b>30 个 benchmark</b> 和 <b>7 个 harness</b>（MiniAgent、Claude Code、Codex、Pi、Hermes、OpenClaw、OpenCode），用于复现、比较和开发 Agent 自我改进方法。
 </p>
 
 <p align="center">
@@ -57,11 +57,12 @@
 - 🧪 **30 个 Benchmark 与 13 种 RSI 方法。** 覆盖问答、推理、数学、代码、网页研究、文档、工具调用
   和交互任务，提供 **29 个套件的 34 份 Hugging Face 固定配置**，以及 OPRO、GEPA、EvoPrompt、ACE、
   SkillOpt、Evo-Harness、AHE、ADAS、DarwinX、Meta-Harness、ModularRSI、RRSI、Arbor 的可运行适配。
-- 🧠 **原生 Harness 与可复现证据。** 支持 MiniAgent、Claude Code、Codex、Pi 和 Hermes，将 prompts、skills、工具、
+- 🧠 **原生 Harness 与可复现证据。** 支持 MiniAgent、Claude Code、Codex、Pi、Hermes、OpenClaw 和 OpenCode，将 prompts、skills、工具、
   配置、hooks、plugins、memory 与 runtime 资源纳入版本化 Snapshot；每次运行集中保存候选版本、轨迹、
   指标、用量和任务产物。
 - 🚀 **简单工作流与完整文档。** 使用 `flashrsi run` 演化、`flashrsi evaluate` 评估 Snapshot，配套方法
-  示例、可搜索文档网站和 GitHub Pages 支持；OpenCode 正在接入。
+  示例、可搜索文档网站和 GitHub Pages 支持；OpenCode 通过纯 Python Snapshot runtime 执行，
+  不依赖 Bun、Node、npm 或 OpenCode CLI。
 
 [使用文档 →](docs/usage.zh-CN.md)
 
@@ -561,7 +562,7 @@ Arbor 为新接入算法；原框架图和下方实验表仍对应十二方法�
 
 ## 支持的 Harnesses
 
-FlashRSI 当前支持五种 Harness 接入，其他接入正在规划中。
+FlashRSI 当前支持七种 Harness 接入，其他接入正在规划中。
 
 | Harness | 可编辑资源 | 接入说明 | 状态 |
 | --- | --- | --- | --- |
@@ -570,7 +571,8 @@ FlashRSI 当前支持五种 Harness 接入，其他接入正在规划中。
 | [Codex](docs/codex.md) | 指令、skills、子 Agent、hooks、插件、记忆、规则与配置 | 基于固定 Rust 基线的 Python 语义移植，在隔离进程中从 Snapshot 执行选定资源。 | 可用 |
 | [Pi](docs/agent-integration.md) | Snapshot 内的纯 Python runtime、指令、skills、prompt templates 与 settings | 通过 `runtime/pi_native` 执行 Pi v1.4.0 的 headless loop 和 Pi 形状事件；不依赖 Node/npm。 | 可用 |
 | [Hermes](docs/agent-integration.md) | Python Snapshot runtime、SOUL 指令、skills、工具配置 | 基于 v0.22.5 原上游 Python helper 与本地工具实现 headless 路径；不依赖宿主 Hermes CLI。 | 可用 |
-| [OpenCode](docs/agent-integration.md) | 指令、工具、插件与 settings | 资源清单和 Snapshot 绑定正在进行。 | 规划中 |
+| [OpenClaw](docs/agent-integration.md) | 纯 Python Snapshot runtime、bootstrap 文件、skills、工具、策略、会话与记忆配置 | Snapshot 内的 `runtime/openclaw_native` 遵循固定版本的嵌入式执行路径，支持 Chat Completions、Responses 和 Anthropic Messages；不依赖 Node/npm/Gateway。 | 可用 |
+| [OpenCode](docs/agent-integration.md) | 纯 Python Snapshot runtime、指令、工具、权限、会话与配置 | Snapshot 内的 `runtime/opencode_native` 遵循固定 v1.19.3 的嵌入式执行路径，支持 Chat Completions、Responses 和 Anthropic Messages；不依赖 Bun/Node/CLI。 | 可用 |
 
 ## 支持的 Benchmarks
 
