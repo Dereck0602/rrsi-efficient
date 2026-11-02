@@ -1,0 +1,12 @@
+runtime:
+  - runtime/openclaw_native/**
+prompt:
+  - AGENTS.md
+  - SOUL.md
+  - prompts/**
+skill:
+  - skills/**
+config:
+  - config.yaml
+# Gateway channels, UI, and host services are outside the benchmark Target.
+# The Snapshot contains only the embedded turn runtime and its resources.

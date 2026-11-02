@@ -1,0 +1,38 @@
+runtime:
+  runtime_id: openclaw
+  protocol_version: 1
+  session_format: openclaw-native-v1
+  memory_format: markdown-sqlite-v1
+  provider_apis:
+    - chat_completions
+    - responses
+    - anthropic_messages
+prompt:
+  bootstrap_files:
+    - AGENTS.md
+    - SOUL.md
+  skills_mode: available-list
+tools:
+  profile: coding
+  allow:
+    - read
+    - write
+    - edit
+    - apply_patch
+    - exec
+    - process
+    - read_skill
+    - memory_search
+  deny: []
+session:
+  persist: true
+  transcript: transcript.sqlite
+memory:
+  enabled: true
+  curated_files:
+    - MEMORY.md
+    - USER.md
+  daily_dir: memory
+compaction:
+  enabled: true
+  threshold: 0.80

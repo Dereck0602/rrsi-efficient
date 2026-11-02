@@ -138,6 +138,43 @@ Responses 使用 `openai-responses`。每个角色显式配置凭据和端点；
 运行依赖为 Python、httpx、Pillow、`regexrs-py`、PyYAML、Bash 和任务命令需要的程序。容器复用公共 Snapshot
 执行入口，不需要 benchmark 专用 Hermes 分支。示例见 [hermes.yaml](../examples/hermes.yaml)。
 
+OpenClaw 的 [适配类](../flashrsi/agents/openclaw/__init__.py) 从所选 Snapshot 的
+`runtime/openclaw_native/` 加载纯 Python embedded-turn runtime，基线为 OpenClaw
+`v2026.10.9`（commit `8b18b5578f66eab1501cba4cef2310d88bfb9a41`）。它按固定顺序组装
+bootstrap 文件和 skills、恢复 SQLite transcript、执行上下文压缩、请求模型、顺序执行工具，
+直到最终答复或迭代预算结束。Chat Completions、Responses 和 Anthropic Messages 各自使用
+原生的 assistant tool envelope 和 tool result 格式，并支持 SSE、usage、取消和超时。
+
+Snapshot 提供 `read`、`write`、`edit`、`apply_patch`、`exec`、`process`、`read_skill` 和
+`memory_search` 工具；工具策略支持 profile、显式 allow/deny 和 opt-in workspace sandbox。
+skill 清单遵循 workspace > `.agents/skills` > bundled 的优先级，并应用
+`metadata.openclaw` 的 disabled、OS、binary、environment 和 model-invocation gating。
+`PROVENANCE.json` 和 [native runtime README](../flashrsi/agents/openclaw/runtime/openclaw_native/README.md)
+记录了来源、范围和明确排除的 Gateway、channel、UI、cron、plugin marketplace 与容器 supervisor。
+OpenClaw 路径不启动 Node.js、npm、Gateway 或宿主 CLI；运行依赖只有 Python 项目已有的 httpx 和 PyYAML。
+示例见 [openclaw.yaml](../examples/openclaw.yaml)，wire、session、tool loop 和资源测试见
+[OpenClaw tests](../tests/test_openclaw_provider_wire.py)。
+
+OpenCode 的 [适配类](../flashrsi/agents/opencode/__init__.py) 从所选 Snapshot 的
+`runtime/opencode_native/` 加载纯 Python embedded-turn runtime，基线为
+`anomalyco/opencode` v1.19.3（commit `e3c4eb242585dcd77be1a867391b7c25fd47ce52`）。主循环保留
+OpenCode 的 prompt/processor 结构：恢复 session、组装 instructions 和 skills、请求 provider、
+按顺序处理 tool calls、压缩上下文并在最终 assistant turn 结束；Chat Completions、Responses
+和 Anthropic Messages 的 tool envelope 分别按原生协议生成。
+
+这是 headless Snapshot 适配层，不宣称产品级逐事件、逐数据库 schema 或逐工具输出字节一致：SQLite
+transcript、事件记录和本地 compaction 是 Python 等价实现；交互式 permission ask、Question、MCP/LSP
+监督、模型摘要 compaction、媒体附件与 TUI/server 仍属于明确排除或需要宿主服务的范围。
+
+默认工具包括 `read`、`write`、`edit`、`apply_patch`、`bash`、`glob`、`grep`、`webfetch`、
+`diagnostics`、`task`、`todowrite` 和 `skill`，并支持 Snapshot 兼容的 `read_skill`、`memory_search` 与 process
+工具。权限配置支持 profile、allow/deny 和 workspace sandbox；session 使用 Snapshot 外的
+SQLite transcript，避免不同 benchmark task 共享历史。运行不需要 Bun、Node、npm、OpenCode
+CLI 或宿主 server；明确排除 TUI、server、OAuth/account、MCP supervisor 和 LSP process
+supervisor。`PROVENANCE.json` 和 [native runtime README](../flashrsi/agents/opencode/runtime/opencode_native/README.md)
+记录了来源、适配范围和排除边界。示例见 [opencode.yaml](../examples/opencode.yaml)，核心、wire
+和 adapter 测试见 [OpenCode tests](../tests/test_opencode_native_core.py)。
+
 上下文和长输出路径均由所选 Snapshot 内的 Python 代码执行：
 
 | 路径 | 配置与行为 |

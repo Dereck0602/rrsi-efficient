@@ -1,0 +1,35 @@
+runtime:
+  runtime_id: opencode
+  protocol_version: 1
+  session_format: opencode-native-v1
+  provider_apis:
+    - chat_completions
+    - responses
+    - anthropic_messages
+prompt:
+  instruction_files:
+    - AGENTS.md
+    - SOUL.md
+permissions:
+  profile: coding
+  allow:
+    - read
+    - write
+    - edit
+    - apply_patch
+    - bash
+    - glob
+    - grep
+    - fetch
+    - webfetch
+    - diagnostics
+    - task
+    - todowrite
+    - skill
+  deny: []
+session:
+  persist: true
+  transcript: opencode-session.sqlite
+compaction:
+  enabled: true
+  threshold: 0.8

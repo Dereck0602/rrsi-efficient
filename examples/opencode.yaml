@@ -1,0 +1,32 @@
+# OpenCode native Python Target; no Bun, Node, npm, or OpenCode CLI is used.
+# Configure Target and Worker credentials independently.
+run:
+  output_dir: ../runs/opencode
+
+benchmark:
+  name: searchqa
+  data_path: ./examples/data/quickstart.jsonl
+  split: auto
+  limit: 12
+
+agent:
+  name: opencode
+  source_dir: ../flashrsi/agents/opencode
+  timeout: 300
+  max_turns: 32
+  llm:
+    model_name: your-model
+    model_api: chat_completions
+    api_key: null
+    base_url: null
+  tools:
+    profile: coding
+
+algorithm:
+  name: skillopt
+  worker:
+    type: llm
+    llm:
+      model_name: your-worker-model
+      api_key: null
+      base_url: null

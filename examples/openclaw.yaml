@@ -1,0 +1,30 @@
+agent:
+  name: openclaw
+  source_dir: ../flashrsi/agents/openclaw
+  llm:
+    model_name: your-model
+    api_key: null
+    base_url: null
+    model_api: chat_completions
+  timeout: 300
+  max_turns: 32
+  tool_policy:
+    profile: coding
+    allow: [read, write, edit, apply_patch, exec, read_skill, memory_search]
+
+algorithm:
+  name: skillopt
+  worker:
+    type: llm
+    llm:
+      model_name: your-worker-model
+      api_key: null
+      base_url: null
+
+benchmark:
+  name: searchqa
+  split: auto
+  limit: 12
+
+run:
+  output_dir: runs/openclaw

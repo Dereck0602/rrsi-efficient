@@ -1,6 +1,6 @@
 # Benchmark 配置索引
 
-当前注册 **30 个 Benchmark、13 个算法、5 个 Target Agent**。同一适配器的版本、年份和领域不重复计数；例如 Terminal-Bench 2.0 / 2.1、AIME 2025 / 2026、τ² 三个领域分别只计一项。
+当前注册 **30 个 Benchmark、13 个算法、7 个 Target Agent**。同一适配器的版本、年份和领域不重复计数；例如 Terminal-Bench 2.0 / 2.1、AIME 2025 / 2026、τ² 三个领域分别只计一项。
 
 其中 29 项可选择 [`RUC-NLPIR/FlashRSI` 的 HF prepared 数据源](hf-prepared-data.md)，共 34 份配置，使用固定发布划分和校验过的原生资源；原有默认来源保持不变。
 

@@ -1,0 +1,7 @@
+runtime:
+  - runtime/opencode_native/**
+prompt:
+  - AGENTS.md
+  - SOUL.md
+config:
+  - config.yaml

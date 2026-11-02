@@ -191,6 +191,14 @@ class GenericLauncherTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cli_path"):
             _startup._role(cfg.agent, "agent", "hermes")
 
+    def test_opencode_plans_and_rejects_host_runtime(self):
+        cfg = config(agent="opencode")
+        plan = _launch._plan(cfg)
+        self.assertEqual(plan["agent"], "opencode")
+        cfg.agent.node_path = "node"
+        with self.assertRaisesRegex(ValueError, "node_path"):
+            _startup._role(cfg.agent, "agent", "opencode")
+
     def test_plan_does_not_install_selected_dependencies_or_expose_keys(self):
         path = self.root / "plan.yaml"
         path.touch()

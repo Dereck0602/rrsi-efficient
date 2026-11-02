@@ -1,0 +1,49 @@
+{
+  "runtime": "opencode-native",
+  "upstream": "OpenCode embedded agent runtime",
+  "upstream_repository": "https://github.com/anomalyco/opencode",
+  "upstream_release": "v1.19.3",
+  "upstream_commit": "e3c4eb242585dcd77be1a867391b7c25fd47ce52",
+  "implementation": "native Python reimplementation of the embedded turn path",
+  "runtime_dependencies": [
+    "httpx",
+    "PyYAML"
+  ],
+  "node_or_npm_required": false,
+  "scope": [
+    "session prompt and transcript",
+    "provider-neutral model loop and tool continuations",
+    "Chat Completions, Responses, and Anthropic Messages transports",
+    "OpenCode read/write/edit/apply_patch/bash/glob/grep/webfetch/diagnostics/task/todowrite/skill tools",
+    "permission profiles and workspace authority",
+    "context compaction and deterministic trajectory events",
+    "bootstrap resource and skill assembly",
+    "todo state and injected task delegation"
+  ],
+  "excluded": [
+    "Bun/Node host CLI",
+    "TUI and web server",
+    "gateway and OAuth account management",
+    "MCP server supervision",
+    "LSP process supervision",
+    "remote provider credential discovery"
+  ],
+  "adaptation": "The Python snapshot preserves the headless prompt/tool continuation and provider wire contracts while replacing TypeScript/Bun host services with explicit Python interfaces. task delegation is injectable and returns a deterministic not_configured receipt when absent.",
+  "parity_boundary": {
+    "aligned": [
+      "assistant tool-call continuation and stop handling",
+      "MAX_STEPS_PROMPT final-step behavior",
+      "last-match permission rules and edit capability alias",
+      "Chat Completions, Responses, and Anthropic tool envelopes",
+      "read envelope, paging, binary detection, instruction reminders, and media attachments",
+      "model-facing tool-result text for file, search, shell, skill, task, and todo tools",
+      "turn-tail selection, tool-result pruning, and compacted summary serialization"
+    ],
+    "snapshot_adapted": [
+      "SQLite transcript schema and trajectory event names",
+      "local deterministic compaction instead of upstream compaction-agent summary",
+      "structured tool receipts instead of the full SessionV1 part/metadata store",
+      "headless denial for interactive ask/question requests"
+    ]
+  }
+}

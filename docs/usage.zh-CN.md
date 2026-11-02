@@ -53,7 +53,7 @@ uv run flashrsi run --config examples/quickstart.yaml \
 | Terminal-Bench 2.0 | [examples/terminal_bench.yaml](../examples/terminal_bench.yaml) | `harbor`、Python 3.12+、Docker |
 | τ³ Banking | [examples/tau3_banking.yaml](../examples/tau3_banking.yaml) | `tau2` 和上游 benchmark |
 
-`all` 安装包含 MiniAgent、Claude Code、Codex、Pi、Hermes、LLM Worker 以及所有非 Harbor 基准的 Python 依赖。Pi 直接执行选定 Agent Snapshot 中的纯 Python runtime，不需要 Node.js、npm 或安装 Pi CLI。Codex 执行 Python 核心；Code Mode 模型另需 Node.js。Harbor 与 tau2 的上游依赖存在冲突，需要安装在不同环境中。准备步骤与验证范围见 [Terminal-Bench 接入说明](terminal-bench.md)、[Codex 接入说明](codex.md)和对应配置。
+`all` 安装包含 MiniAgent、Claude Code、Codex、Pi、Hermes、OpenClaw、OpenCode、LLM Worker 以及所有非 Harbor 基准的 Python 依赖。Pi、OpenClaw 和 OpenCode 直接执行选定 Agent Snapshot 中的纯 Python runtime，不需要 Node.js、npm 或对应 CLI。Codex 执行 Python 核心；Code Mode 模型另需 Node.js。Harbor 与 tau2 的上游依赖存在冲突，需要安装在不同环境中。准备步骤与验证范围见 [Terminal-Bench 接入说明](terminal-bench.md)、[Codex 接入说明](codex.md)和对应配置。
 
 ### 使用独立环境安装
 
@@ -76,6 +76,7 @@ pip install -e ".[all]"
 | [Codex](codex.md) | 原生 Codex runtime | 指令、skills、agents、hooks、MCP 服务、插件 bundle、记忆资源、规则和配置；具体执行模式见接入说明 |
 | [Pi](agent-integration.md) | Snapshot 内的纯 Python `runtime/pi_native` | Pi 兼容的 headless loop、provider transport、工具、指令、skills、prompt templates 与 settings；不依赖 Node/npm |
 | [Hermes](agent-integration.md) | Snapshot 内的 Python `runtime/hermes_native` | Hermes headless 子集，保留原上游策略、本地文件/终端工具、SOUL 指令、skills 与配置；见[示例](../examples/hermes.yaml) |
+| [OpenCode](agent-integration.md) | Snapshot 内的纯 Python `runtime/opencode_native` | OpenCode v1.19.3 embedded loop、provider transport、coding 工具、权限、session 与压缩；不依赖 Bun/Node/CLI；见[示例](../examples/opencode.yaml) |
 
 **计划接入：** OpenHands，演示中一并展示。Pi 已通过 Snapshot 内 runtime adapter 接入，详见[Agent 接入说明](agent-integration.md)。
 

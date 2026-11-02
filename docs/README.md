@@ -179,7 +179,8 @@ The same adapter can serve as a Target that solves tasks or an Agent Worker that
 | Codex | Python core, instructions, skills, plugins, memory, rules, configuration | Available | [Codex guide](codex.md) |
 | Pi | Pure-Python runtime, instructions, skills, prompt templates, settings | Available | [Integration contract](agent-integration.md) |
 | Hermes | Python runtime, SOUL instructions, skills, tool settings | Available | [Integration contract](agent-integration.md) |
-| OpenCode | Instructions, tools, plugins, settings | Doing | [Integration contract](agent-integration.md) |
+| OpenClaw | Pure-Python Snapshot runtime, bootstrap files, skills, tools, policy, session and memory settings | Available | [Integration contract](agent-integration.md) |
+| OpenCode | Pure-Python Snapshot runtime, instructions, coding tools, permissions and session settings | Available | [Integration contract](agent-integration.md) |
 
 For task environments and Harbor boundaries, see [Harness and benchmark responsibilities](benchmark-harness-boundary.md).
 

@@ -43,7 +43,7 @@ This is the [bundled quickstart](../../examples/quickstart.yaml). Method-specifi
 | --- | --- |
 | `run.output_dir` | Parent directory for experiment records. |
 | `run.mode`, `run.snapshot` | Saved-Snapshot evaluation when selected through configuration. See [evaluation](./evaluation.md). |
-| `agent.name` | Target harness: `miniagent`, `claude_code`, `codex`, `pi`, or `hermes`. |
+| `agent.name` | Target harness: `miniagent`, `claude_code`, `codex`, `pi`, `hermes`, `openclaw`, or `opencode`. |
 | `agent.llm.*` | Target model, credentials, endpoint, and supported request options. |
 | `agent.max_turns` | Target execution budget, subject to harness support. |
 | `agent.source_dir` | Alternate resource source for a harness. |

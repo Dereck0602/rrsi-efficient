@@ -3,7 +3,7 @@
 [返回首页](../README.zh-CN.md) · [使用指南](usage.zh-CN.md)
 
 FlashRSI 用同一套实验入口连接 Algorithm、Benchmark 和 Agent，记录演化版本、逐题轨迹与最终 test 结果。
-当前注册 13 个算法、5 个 Target Agent、30 个 Benchmark；接入范围及各项额外配置见
+当前注册 13 个算法、7 个 Target Agent、30 个 Benchmark；接入范围及各项额外配置见
 [Benchmark 配置索引](benchmark-quickstart.md)。注册数量不表示所有组合均已通过真实运行。
 
 首次体验也可使用附带 12 道题的 [quickstart_launch.yaml](../examples/quickstart_launch.yaml)，无需下载 SearchQA 全量数据。Codex 的额外工具链和 Responses API 要求见 [Codex 指南](codex.md)。
@@ -71,8 +71,8 @@ SkillOpt 使用 `num_epochs`、`batch_size` 等。AHE 必须使用 Agent Worker�
 | 选择字段 | 可用值 |
 | --- | --- |
 | `algorithm.name` | `ace`、`adas`、`ahe`、`darwinx`、`evo_harness`、`evoprompt`、`gepa`、`meta_harness`、`modular_rsi`、`opro`、`rrsi`、`skillopt` |
-| `agent.name` | `miniagent`、`claude_code`、`codex`、`pi`、`hermes` |
-| `algorithm.worker.type` | `llm`；或 `agent` 并配置 `worker.name: miniagent / claude_code / codex / pi / hermes` |
+| `agent.name` | `miniagent`、`claude_code`、`codex`、`pi`、`hermes`、`openclaw`、`opencode` |
+| `algorithm.worker.type` | `llm`；或 `agent` 并配置 `worker.name: miniagent / claude_code / codex / pi / hermes / openclaw / opencode` |
 | `benchmark.name` | [30 个注册项及对应示例](benchmark-quickstart.md) |
 
 `adas`、`darwinx`、`evo_harness`、`meta_harness`、`modular_rsi`、`rrsi` 和 `ahe`

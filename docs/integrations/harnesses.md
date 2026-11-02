@@ -11,6 +11,8 @@ A harness executes the agent's instructions, tools, skills, and runtime logic. I
 | Codex | Python core, instructions, tools, skills, agents, hooks, plugins, memory, rules/config files | Snapshot-local Python semantic port based on `rust-v0.147.0`; runs in an isolated process. [Guide](../codex.md) · [version and migration boundary](../codex-core-extraction.md) |
 | Pi | Pure-Python Pi-compatible runtime, instructions, skills, prompt templates, settings | Snapshot-local `runtime/pi_native` implements the headless Pi v1.4.0 path and emits Pi-shaped JSON events; no Node/npm dependency. [Adapter details](../agent-integration.md) |
 | Hermes | Python runtime, SOUL instructions, skills and tool settings | Snapshot-local headless Hermes v0.22.5 subset, retaining upstream Python policies and local tool helpers. [Adapter details and limits](../agent-integration.md) · [example](../../examples/hermes.yaml) |
+| OpenClaw | Pure-Python Snapshot runtime, bootstrap files, skills, tools, policy, session and memory settings | Snapshot-local `runtime/openclaw_native` follows the pinned embedded turn path across Chat Completions, Responses and Anthropic Messages; no Node/npm/Gateway dependency. [Adapter details](../agent-integration.md) · [example](../../examples/openclaw.yaml) |
+| OpenCode | Pure-Python Snapshot runtime, instructions, coding tools, permissions, sessions and settings | Snapshot-local `runtime/opencode_native` follows OpenCode v1.19.3's embedded prompt/processor path and provider tool envelopes; no Bun/Node/CLI dependency. [Adapter details](../agent-integration.md) · [example](../../examples/opencode.yaml) |
 
 Codex's Python core implements the documented paths from a pinned Rust baseline. It does not launch the Codex CLI, fall back to the host core, or claim complete equivalence to every upstream feature. For example, declaring rules as resources does not implement rules-based execution policy; see [capability limits](../codex.md#明确的能力边界).
 
@@ -33,7 +35,8 @@ algorithm:
 
 This fragment only illustrates role selection. Keep the rest of the destination method's example and supply both roles' credentials and endpoints.
 
-Built-in Workers receive shared role instructions on each `ask` or `edit` call.
+LLM, MiniAgent, Claude Code, Codex, Pi, and Hermes Workers receive shared role
+instructions on each `ask` or `edit` call.
 These are appended to the harness's native system instructions (Codex uses its
 native developer instructions); Claude Code retains the `claude_code` preset.
 The algorithm's request still defines the search strategy and reply format.
@@ -47,15 +50,12 @@ behavioral guidance, not filesystem or process isolation, and does not change
 tool permissions. The supplement is recorded in the call's `RunConfig`, not in
 Snapshot resources. Snapshot-local runtimes from older versions or custom Agent
 adapters need the corresponding system-instruction hook to support it; saved
-Snapshots are not rewritten automatically.
+Snapshots are not rewritten automatically. OpenClaw and OpenCode do not yet
+consume the shared Worker supplement in their native runtimes.
 
-## Upcoming adapters
-
-| Harness | Status |
-| --- | --- |
-| OpenCode | Doing |
-
-These are planned integrations and are not available CLI harness choices.
+OpenCode is available as a Target and Agent Worker. Its Snapshot excludes the Bun/Node host CLI, TUI,
+server, OAuth account flows, MCP supervisor, and LSP process supervisor; benchmark execution uses the
+shared Agent/container boundary.
 
 ## Check the task environment
 

@@ -84,11 +84,15 @@ exclude = [
 "flashrsi.agents.codex" = ["components.yaml", "config.toml", "skills/**/*", "rules/**/*", "agents/**/*", "hooks/**/*", "servers/**/*", "plugins/**/*", "memories/**/*", "python_core/**/*"]
 "flashrsi.agents.pi_agent" = ["components.yaml", "AGENTS.md", "CLAUDE.md", "SYSTEM.md", "APPEND_SYSTEM.md", "prompts/**/*", ".pi/agent/settings.json", ".pi/agent/skills/**/*", ".pi/agent/prompt-templates/**/*", ".pi/agent/prompts/**/*", ".pi/agent/SYSTEM.md", ".pi/agent/APPEND_SYSTEM.md", "runtime/pi_native/**/*", "runtime/pi_native/reference/**/.gitignore"]
 "flashrsi.agents.hermes" = ["components.yaml", "SOUL.md", "AGENTS.md", "config.yaml", "prompts/**/*", "skills/**/*", "runtime/hermes_native/**/*"]
+"flashrsi.agents.openclaw" = ["components.yaml", "SOUL.md", "AGENTS.md", "config.yaml", "prompts/**/*", "skills/**/*", "runtime/openclaw_native/**/*"]
+"flashrsi.agents.opencode" = ["components.yaml", "SOUL.md", "AGENTS.md", "config.yaml", "prompts/**/*", "skills/**/*", "runtime/opencode_native/**/*"]
 
 [tool.setuptools.exclude-package-data]
 "flashrsi.agents.codex" = ["**/__pycache__/*", "**/*.pyc", "**/*.pyo"]
 "flashrsi.agents.pi_agent" = ["**/__pycache__/*", "**/*.pyc", "**/*.pyo"]
 "flashrsi.agents.hermes" = ["**/__pycache__/*", "**/*.pyc", "**/*.pyo"]
+"flashrsi.agents.openclaw" = ["**/__pycache__/*", "**/*.pyc", "**/*.pyo"]
+"flashrsi.agents.opencode" = ["**/__pycache__/*", "**/*.pyc", "**/*.pyo"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

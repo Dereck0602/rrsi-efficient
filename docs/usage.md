@@ -53,7 +53,7 @@ For another harness or task suite, start with a matching configuration:
 | Terminal-Bench 2.0 | [examples/terminal_bench.yaml](../examples/terminal_bench.yaml) | `harbor`, Python 3.12+, Docker |
 | τ³ Banking | [examples/tau3_banking.yaml](../examples/tau3_banking.yaml) | `tau2` and the upstream benchmark |
 
-The `all` installation includes the Python dependencies for MiniAgent, Claude Code, Codex, Pi, Hermes, the LLM Worker, and all non-Harbor benchmarks. Pi runs the pure-Python runtime stored in the selected Agent Snapshot and does not require Node.js, npm, or a Pi installation. Codex runs its Python core; Code Mode models also need Node.js. Harbor and tau2 need separate environments because their upstream dependencies conflict. See the [Terminal-Bench guide](terminal-bench.md), [Codex guide](codex.md), and linked configurations for setup and validation coverage.
+The `all` installation includes the Python dependencies for MiniAgent, Claude Code, Codex, Pi, Hermes, OpenClaw, OpenCode, the LLM Worker, and all non-Harbor benchmarks. Pi, OpenClaw, and OpenCode run pure-Python runtimes stored in the selected Agent Snapshot and do not require Node.js, npm, or their host CLIs. Codex runs its Python core; Code Mode models also need Node.js. Harbor and tau2 need separate environments because their upstream dependencies conflict. See the [Terminal-Bench guide](terminal-bench.md), [Codex guide](codex.md), and linked configurations for setup and validation coverage.
 
 ### Isolated installation
 
@@ -78,6 +78,7 @@ See also the [30-benchmark configuration index](benchmark-quickstart.md) and [au
 | [Codex](codex.md) | Native Codex runtime | Instructions, skills, agents, hooks, MCP servers, plugin bundles, memory resources, rules, and configuration; execution modes are covered in the adapter guide |
 | [Pi](agent-integration.md) | Snapshot-local pure-Python `runtime/pi_native` | Pi-compatible headless loop, provider transports, tools, instructions, skills, prompt templates, and settings; no Node/npm dependency |
 | [Hermes](agent-integration.md) | Snapshot-local Python `runtime/hermes_native` | Hermes headless subset with upstream policies, local file/terminal tools, SOUL instructions, skills and settings; [example](../examples/hermes.yaml) |
+| [OpenCode](agent-integration.md) | Snapshot-local pure-Python `runtime/opencode_native` | OpenCode v1.19.3 embedded loop, provider transports, coding tools, permissions, sessions and compaction; no Bun/Node/CLI dependency; [example](../examples/opencode.yaml) |
 
 **Planned adapters:** OpenHands, also previewed in the demo. Pi is available through the Snapshot-local runtime adapter described in [Agent integration](agent-integration.md).
 

@@ -1,0 +1,20 @@
+{
+  "runtime": "openclaw-native",
+  "upstream": "OpenClaw embedded agent runtime",
+  "upstream_repository": "https://github.com/openclaw/openclaw",
+  "upstream_release": "v2026.10.9",
+  "upstream_commit": "8b18b5578f66eab1501cba4cef2310d88bfb9a41",
+  "implementation": "native Python reimplementation",
+  "runtime_dependencies": ["httpx", "PyYAML"],
+  "node_or_npm_required": false,
+  "scope": [
+    "agent loop",
+    "prompt and skill assembly",
+    "tool policy and execution",
+    "provider streams",
+    "session persistence",
+    "memory lookup",
+    "context compaction"
+  ],
+  "excluded": ["gateway", "channels", "control_ui", "cron_daemon", "host_cli"]
+}

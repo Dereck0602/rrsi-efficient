@@ -7,8 +7,8 @@
 <p align="center"><i>One click to reproduce, compare, and develop RSI methods across agents and tasks.</i></p>
 
 <p align="center">
-  FlashRSI provides one experiment interface for <b>13 RSI algorithms</b>, <b>30 benchmarks</b>, and native
-  integrations for MiniAgent, Claude Code, Codex, Pi, and Hermes. Each run records the resources that changed,
+  FlashRSI provides one experiment interface for <b>13 RSI algorithms</b>, <b>30 benchmarks</b>, and <b>7 harness integrations</b>:
+  MiniAgent, Claude Code, Codex, Pi, Hermes, OpenClaw, and OpenCode. Each run records the resources that changed,
   trajectories that produced the score, and the Snapshot selected at the end.
 </p>
 
@@ -54,6 +54,7 @@
 
 ## Features
 
+
 - 🧩 **Configurable Experiment Framework**: Combines an RSI method, Target harness, Worker, benchmark,
   and independent model settings in one YAML/CLI experiment. Resource scopes and execution roles can
   change without writing a new runner.
@@ -61,19 +62,19 @@
   web research, documents, tool use, and interactive tasks, with **34 pinned Hugging Face prepared
   configurations** for 29 suites, plus runnable adaptations of OPRO, GEPA, EvoPrompt, ACE, SkillOpt,
   Evo-Harness, AHE, ADAS, DarwinX, Meta-Harness, ModularRSI, RRSI, and Arbor.
-- 🧠 **Native Harnesses and Reproducible Evidence**: MiniAgent, Claude Code, Codex, Pi, and Hermes map prompts,
+- 🧠 **Native Harnesses and Reproducible Evidence**: MiniAgent, Claude Code, Codex, Pi, Hermes, OpenClaw, and OpenCode map prompts,
   skills, tools, configuration, hooks, plugins, memory, and runtime resources into versioned Snapshots.
   Each run keeps immutable candidates, redacted configuration, Target/Worker trajectories, metrics,
   usage, and task artifacts together.
 - 🚀 **Simple Workflow and Extensible Docs**: Use `flashrsi run` for evolution and `flashrsi evaluate`
   for saved Snapshots, with method examples, a searchable documentation site, and GitHub Pages support.
-  OpenCode integration is in progress.
+  OpenCode is available through the pure-Python Snapshot runtime; it does not require Bun, Node, npm, or the OpenCode CLI.
 
 See the [documentation home](docs/index.md) for the guide, integrations, and development notes.
 
 <p align="center">
   <a href="assets/readme/framework-overview.jpg">
-    <img src="assets/readme/framework-overview.jpg" alt="FlashRSI framework overview: 12 RSI algorithms, immutable AgentSnapshots, five agent harnesses, and 30 benchmarks." width="100%">
+    <img src="assets/readme/framework-overview.jpg" alt="FlashRSI framework overview: 12 RSI algorithms, immutable AgentSnapshots, seven agent harnesses, and 30 benchmarks." width="100%">
   </a>
 </p>
 
@@ -120,7 +121,7 @@ flashrsi run \
   --algorithm skillopt \
   --benchmark searchqa \
   --agent-harness miniagent \
-  --model deepseek-v4.1-pro \
+  --model deepseek-v4-pro \
   --worker-model deepseek-v4.1-flash \
   --set agent.llm.api_key="$TARGET_API_KEY" \
   --set algorithm.worker.llm.api_key="$WORKER_API_KEY"
@@ -237,7 +238,7 @@ For experience accumulation, see [ACE](docs/ace.md) for playbook curation and of
 
 Directory-editing guides cover [AHE](docs/ahe.md), [ADAS](docs/adas.md), and [Meta-Harness](docs/meta-harness.md), with their editing bases, evidence, and final selection rules.
 
-### Overall experiment results
+### Overall results
 
 The table below reports source-task performance and frozen transfer performance for the twelve
 methods evaluated on Claude Code and Mini-Agent. It covers four source benchmarks, five near-domain
@@ -652,7 +653,7 @@ highest final score within each benchmark and harness, including ties.
 
 ## Supporting Harnesses
 
-FlashRSI currently supports five harness integrations; additional integrations are planned.
+FlashRSI currently supports seven harness integrations; additional integrations are planned.
 
 | Harness | Editable resources | Integration details | Status |
 | --- | --- | --- | --- |
@@ -661,7 +662,8 @@ FlashRSI currently supports five harness integrations; additional integrations a
 | [Codex](docs/codex.md) | Instructions, skills, agents, hooks, plugins, memory, rules, configuration | Snapshot-local Python port based on `rust-v0.147.0`, with documented coverage limits. | Available |
 | [Pi](docs/agent-integration.md) | Pure-Python Snapshot runtime, instructions, skills, prompt templates, and settings | Snapshot-local `runtime/pi_native` follows Pi v1.4.0's headless loop and Pi-shaped JSON events; no Node/npm dependency. | Available |
 | [Hermes](docs/agent-integration.md) | Python Snapshot runtime, SOUL instructions, skills, tool settings | Supported headless Hermes v0.22.5 path with upstream Python helpers and local tools; no installed Hermes CLI required. | Available |
-| [OpenCode](docs/agent-integration.md) | Instructions, tools, plugins, settings | Resource inventory and Snapshot binding are in progress. | **doing** |
+| [OpenClaw](docs/agent-integration.md) | Pure-Python Snapshot runtime, bootstrap files, skills, tools, policy, session and memory settings | Snapshot-local `runtime/openclaw_native` follows the pinned embedded turn path across Chat Completions, Responses and Anthropic Messages; no Node/npm/Gateway dependency. | Available |
+| [OpenCode](docs/agent-integration.md) | Pure-Python Snapshot runtime, instructions, tools, permissions, sessions and settings | Snapshot-local `runtime/opencode_native` follows the pinned v1.19.3 embedded turn path across Chat Completions, Responses and Anthropic Messages; no Bun/Node/CLI dependency. | Available |
 
 ## Supporting Benchmarks
 
