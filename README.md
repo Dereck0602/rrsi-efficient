@@ -230,7 +230,7 @@ FlashRSI implements 13 RSI methods:
 
 Arbor is newly integrated; the original diagram and experiment results below cover the twelve-method study. Arbor has no real-model results yet.
 
-### Overall experiment results
+### Overall results
 
 The table below reports source-task performance and frozen transfer performance for the twelve
 methods evaluated on Claude Code and Mini-Agent. It covers four source benchmarks, five near-domain
