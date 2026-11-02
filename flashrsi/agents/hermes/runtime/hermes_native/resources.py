@@ -538,6 +538,9 @@ def load_resources(snapshot_root: Path, cwd: Path, config: dict) -> ResourceBund
             )
             if part
         )
+        # Prompt refreshes after tool/provider changes must retain this call's role.
+        if config.get("_worker_system_prompt"):
+            rendered += "\n\n" + config["_worker_system_prompt"]
         return ResourceBundle(rendered, enabled, diagnostics, settings, catalog)
     finally:
         prompt._resource_settings.reset(token)

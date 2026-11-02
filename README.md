@@ -228,7 +228,15 @@ FlashRSI implements 13 RSI methods:
 | [ModularRSI](https://arxiv.org/abs/2609.14857) | Branch evolution | Independent branches; integration | Success / failure traces |
 | [Arbor](docs/arbor.md) | Branch evolution | Hypothesis tree and insight propagation | Train traces, dev scores |
 
-Arbor is newly integrated; the original diagram and experiment results below cover the twelve-method study. Arbor has no real-model results yet.
+Arbor is newly integrated; the original diagram and experiment results below cover the twelve-method study. A small Arbor × Codex × WorkBench smoke is documented in the [Arbor validation notes](docs/arbor.md#真实模型验证); it does not establish a performance gain.
+
+For SkillOpt's fast/slow updates, selection rules, and budget settings, see the [SkillOpt guide](docs/skillopt.md).
+
+Instruction-search guides cover [OPRO](docs/opro.md), [GEPA](docs/gepa.md), and [EvoPrompt](docs/evoprompt.md), including their different feedback, selection rules, and budget units.
+
+For experience accumulation, see [ACE](docs/ace.md) for playbook curation and offline/online selection, or [Evo-Harness](docs/evo-harness.md) for native skill compilation from a task stream.
+
+Directory-editing guides cover [AHE](docs/ahe.md), [ADAS](docs/adas.md), and [Meta-Harness](docs/meta-harness.md), with their editing bases, evidence, and final selection rules.
 
 ### Overall results
 

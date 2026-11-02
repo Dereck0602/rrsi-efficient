@@ -850,6 +850,7 @@ async def run(
     llm_config: dict | None = None,
     web_config: dict | None = None,
     debug_llm_io: bool = False,
+    system_prompt_append: str = "",
 ) -> dict[str, Any]:
     llm.configure(llm_config or {})
     web_settings.configure(web_config or {})
@@ -868,6 +869,9 @@ async def run(
         from .editor import attach
 
         attach(bundle, Path(working_dir))
+
+    if system_prompt_append:
+        bundle.system_prompt += "\n\n" + system_prompt_append
 
     model = model or llm.DEFAULT_MODEL
     trace = TraceWriter(

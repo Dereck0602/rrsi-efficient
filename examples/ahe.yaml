@@ -1,13 +1,14 @@
 # AHE on SearchQA with MiniAgent.
 #
-# AHE is the one method here whose Worker edits the harness directory itself,
+# AHE's Worker edits the harness directory itself,
 # so `algorithm.worker.type` must be `agent` -- a text Worker is refused at
 # startup. The Worker and the target are separate roles with separate models
 # and credentials; the Worker never runs benchmark tasks.
 #
-# One step costs two rollouts of the whole train split (the candidate, and the
-# baseline it is measured against), plus one debugger call per rollout. A first
-# run should cut both: `--algorithm.max_steps 1 --benchmark.limit 6
+# The baseline costs one full train rollout. Each valid candidate adds one
+# full train rollout; the parent's saved score is reused. When enabled, the
+# debugger adds per-task calls plus an overview on each attempt. A first run
+# should cut the budget: `--algorithm.max_steps 1 --benchmark.limit 6
 # --algorithm.use_debugger false`.
 #
 # What the Evolve Agent may change is whatever the target declares in its own

@@ -1,82 +1,83 @@
-# Meta-Harness 接入
+# Meta-Harness
 
-来源：[论文](https://arxiv.org/abs/2603.28052)、
-[官方代码](https://github.com/stanford-iris-lab/meta-harness/tree/8123ccabe2b19fa1123090b2e5f1bacc20963ce8)。
-核对的 revision 为 `8123ccabe2b19fa1123090b2e5f1bacc20963ce8`，参考
-`reference_examples/text_classification/meta_harness.py` 与
-`reference_examples/terminal_bench_2/meta_harness.py`。
-这是固定模型下的核心搜索机制移植，不是论文实验的完整复现。
+**English** · [简体中文](./meta-harness.zh-CN.md)
 
-## 搜索流程
+[All algorithms](./integrations/algorithms.md) · [Example configuration](../examples/meta_harness.yaml)
 
-1. 在 `dev` 上评估初始 Snapshot，保存源码版本、主指标分数和完整执行轨迹。
-2. 每轮提供可编辑的 seed checkout，并在其内部临时放置历史文件目录。
-   `index.json` 把原生 Snapshot ID 映射到源码 checkout；`trajectories/`
-   提供框架保存的完整评估、分数、编辑决策和此前 Worker 轨迹。
-3. Worker 使用文件与终端工具自主检索，决定参考哪些版本、如何诊断和构造候选。
-   历史不会拼成一个长提示，也不按字符预算截断；退步版本同样可读。
-4. 历史参考目录退出后自动清理，再由框架提交目标目录并执行整个 `dev` 评估。
-   无改动或非法编辑占一轮，不执行候选评估；拒绝记录在后续历史中可读。
-   Worker 调用失败则中止实验，保留框架错误轨迹。
-5. 所有已测候选都留在历史中。搜索结束后只提升主指标最高的 Snapshot，
-   平分保留更早版本；runner 最后只评估一次 `test`。
+Meta-Harness lets a coding Worker retrieve historical source, scores, and full traces from files before constructing a candidate. Each editable checkout starts from the initial Snapshot, while the Worker can reuse or combine any measured version. The loop retains all measured candidates and promotes only the best dev version at the end; ties keep the earlier selected version.
 
-seed checkout 是每轮写入完整候选的起点，不限制 Worker 必须以 seed 为搜索父代。
-Worker 可以读取、复制、组合或改写任何历史源码；外循环不按分数指定父代，
-也不加入固定 mutation、crossover 或额外 reflection 阶段。
-候选的 `parent_id` 如实表示其物理 checkout/commit 基线（seed），
-不把 Worker 借鉴的版本另建成一份版本图。
+## Requirements
 
-## 复用与文件边界
+Dev must be non-empty; train is unused. Dev feedback is available for diagnosis and selection, so it is search feedback rather than an independent final result. The runner owns test evaluation after selection; test data is not added to the algorithm's search history.
 
-实现只有算法入口与提示模板。版本直接使用原生 Snapshot；评分、记录、
-凭据脱敏、文件提交和最终提升复用 Algorithm，不引入 Member、population、
-历史管理器或独立的轨迹序列化协议。
+The Worker must be an Agent (`algorithm.worker.type: agent`) with file reading, search, and editing tools. Configure its model independently of the Target. All Target-declared components are editable, but the native component layout and execution interface remain constraints. Closed harness internals are not exposed by `evolve_scope = {"*"}`.
 
-源码参考通过 Snapshot 的 `check_out` 提供，保留二进制内容和可执行权限。
-轨迹参考直接复制框架已经脱敏的记录，包括完整消息与错误。
-每轮重新生成参考视图，Worker 对历史副本的误改不会覆盖真实 Snapshot 或实验记录。
-所有参考路径相对编辑目录，因此只搬移 `working_dir` 时仍可检索。
-这仅验证目录搬移协议，不代表已经验证真实容器部署。
+## Run a small example
 
-临时历史位于候选 checkout 内，以便文件工具和隔离的 Worker 能访问。
-提交前整个参考目录已移除；历史、日志和运行凭据不进入候选版本。
-演化范围为 target 声明的全部组件，目标组件布局与执行接口仍由原有框架约束。
-MiniAgent 的可编辑 runtime 能用于代码级搜索；Claude Code 演化的是其声明的
-指令、技能、工具和配置，不能据此宣称已经改写闭源 SDK 的内部运行逻辑。
-
-直接通过 Python 调用 `evolve()` 时，也会使用临时实验目录生成同样的完整历史，
-结束或失败后清理并恢复 `_run_dir`；runner 调用则保留正常的持久实验记录。
-
-## 配置与成本
-
-见 [examples/meta_harness.yaml](../examples/meta_harness.yaml)：
+Follow [Installation](./guide/installation.md) and configure both roles in [examples/quickstart.yaml](../examples/quickstart.yaml). Run from the repository root using its local QA data:
 
 ```bash
-uv run flashrsi run --config examples/meta_harness.yaml \
-  --algorithm.max_steps 2 --benchmark.limit 9
+flashrsi run --config examples/quickstart.yaml \
+  --algorithm meta_harness \
+  --algorithm.worker.type agent \
+  --algorithm.worker.name miniagent \
+  --algorithm.worker.max_turns 30 \
+  --algorithm.max_steps 2
 ```
 
-唯一算法参数 `max_steps` 默认 20，表示编辑尝试次数。
-Worker 必须为 `type: agent`，具备文件读取、终端检索和目录编辑能力；
-纯 LLM Worker 在启动时报错。target 与 Worker 的模型配置分别设置。
+Two attempts allow the second Worker call to inspect a prior candidate or decline. They do not guarantee actual history retrieval or valid edits. Append `--check-only` for initialization without model calls or remote authentication checks. See the dedicated [Meta-Harness configuration](../examples/meta_harness.yaml) and [Configuration & CLI](./guide/configuration.md).
 
-设 `dev` 大小为 N，最多进行 `N * (1 + max_steps)` 次目标任务执行，
-以及 `max_steps` 次 Worker 编辑。无效编辑不消耗候选评估。
-不读取 `train`；`dev` 是搜索集，其分数用于诊断和选优，并非独立泛化结果。
-`test` 不进入搜索历史或 Worker 的候选选择。
+## Search and selection
 
-每轮会重新导出全部已测源码和记录，磁盘复制量随历史增长。
-当前优先保留简单的原生 checkout 流程，未加入历史缓存或索引数据库。
+1. Evaluate the initial Snapshot on full dev. Save it as seed and best, together with score and evaluation records.
+2. For each attempt, check out seed as the editable directory. Inside it, temporarily export every measured Snapshot as native source and copy the existing framework trajectories and decisions.
+3. Let the Worker selectively inspect those files, diagnose failures, and edit one candidate. The loop does not choose a historical parent by score or impose fixed mutation, crossover, or reflection stages.
+4. Remove the temporary history and known runtime artifacts before committing. Invalid or unchanged edits are declined, consume one attempt, and skip candidate evaluation. Their records are visible in subsequent history.
+5. Evaluate a valid candidate on full dev and retain it in history even if it regresses. Update best only on a strict improvement.
+6. After `max_steps`, promote best, including seed if no candidate improved. The active Target is not switched during candidate search.
 
-## 移植边界与验证
+The candidate's `parent_id` is always its physical checkout/commit base, seed. It does not describe which historical mechanisms the Worker copied. Distinguish this from [ADAS](./adas.md), where each checkout starts from the current best and the prompt carries descriptions/scores rather than full historical files.
 
-原论文允许每轮多个候选、多初始 harness，以及 accuracy/token 等多目标 Pareto
-输出。Lite 当前每轮构造一个目录候选，从一个初始 Snapshot 搜索，按 benchmark
-的单个主指标选出一个最终 Snapshot。不实现多目标 frontier、恢复运行、
-上游特定任务的 import/smoke 检查和集群调度；接口执行和评分交给现有 target/benchmark。
-提示中的泛化约束不等于独立反作弊验证。
+## History and resource boundaries
 
-离线测试覆盖双 harness、完整历史检索、退步版本、长轨迹、脱敏、
-二进制与权限、目录搬移、拒绝后继续、Worker 失败清理、直接 Python 使用和 runner。
-真实付费模型的演化效果、真实环境 benchmark 端到端表现和论文分数尚未验证。
+The temporary history contains:
+
+| Entry | Content |
+| --- | --- |
+| `index.json` | Snapshot IDs, parent IDs, and paths to native source checkouts. |
+| `sources/` | Every measured version, including regressions, with binary contents and executable permissions preserved. |
+| `trajectories/` | Existing redacted evaluations, scores, decisions, and previous Worker traces. |
+
+Source paths in the index are relative to the history directory. The history path given to the Worker is relative to its editing directory, so references travel with a relocated workspace. History is prompt-designated read-only reference material, not an OS-enforced read-only mount: accidental edits affect only temporary copies, removed before commit. The next attempt rebuilds history from original records and Snapshots.
+
+History is not flattened into one prompt or truncated by an algorithm evidence-character limit. The Worker's own context and tool-output limits still apply. Each iteration re-exports the full measured history, increasing disk work as search grows; there is no history cache or index database.
+
+Direct Python `evolve()` without a run directory uses temporary recording directories, cleaned on completion or failure. Runner-based execution keeps normal experiment records. Worker failures propagate; the temporary references and checkouts are cleaned, not adopted as resource files. This mechanism supports workspace relocation but does not by itself verify every container backend.
+
+## Parameters and cost
+
+The algorithm defines one parameter; model/execution budgets belong to their respective roles.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `max_steps` | `20` | Editing attempts; integer, at least 1. Invalid attempts count. |
+
+For D dev tasks and S attempts, Target search costs at most `(1 + S) * D` task executions. There are S Worker editing calls on normal completion; invalid edits skip candidate dev evaluation. Native model/tool turns and final test are additional. A repeated historical design can be measured again: there is no global candidate deduplication beyond checking whether the edit changed seed.
+
+## Inspect an experiment
+
+`kind: decline` records an unmeasured attempt. `kind: admit` records a measured candidate, its physical parent, score, and `improved_best`; admission means inclusion in history, not final selection. The final `promote` includes selected and baseline scores plus `candidate_ids`, which also includes seed.
+
+To establish history use, inspect Worker file/tool traces. Merely providing history does not prove the Worker read it. Compare candidate resources with any claimed source versions; `parent_id` alone cannot establish conceptual ancestry.
+
+## Source and adaptation
+
+The [implementation](../flashrsi/algorithms/meta_harness/__init__.py) pins `stanford-iris-lab/meta-harness` to commit `8123ccabe2b19fa1123090b2e5f1bacc20963ce8`, referencing the text-classification and Terminal-Bench examples. [Prompts](../flashrsi/algorithms/meta_harness/_prompts.py) define file retrieval and edit boundaries. The prior integration note associates the method with paper identifier `2603.28052`.
+
+This port uses one seed, one candidate per attempt, and one Benchmark primary metric to select one final Snapshot. It does not implement multiple initial harnesses, multi-objective accuracy/token frontiers, cross-process resume, upstream task-specific import/smoke checks, or cluster scheduling. The prompt's generalization instructions are not an independent anti-cheating verifier.
+
+## Validation scope
+
+[Behavior tests](../tests/test_meta_harness.py) cover history including regressions, relocation, ties, invalid-edit feedback, history-copy cleanup, Worker failure, and direct Python use. Local historical report `docs/smoke-metaharness-20261023.json` records MiniAgent × HotpotQA as `flow_passed`; its single final test task scored EM 0 and F1 0.5. Workflow completion is not a performance-gain claim.
+
+The report is an ignored local artifact, not a public result link or exhaustive validation record. This documentation update adds no model calls. Report actual retrieval actions, measured candidates, resource changes, strict-best updates, and frozen test results separately.

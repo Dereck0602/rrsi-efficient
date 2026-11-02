@@ -144,7 +144,15 @@ FlashRSI 目前实现 13 种 RSI 方法：
 | [ModularRSI](https://arxiv.org/abs/2609.14857) | 分支演化 | 独立分支；集成 | 成功 / 失败轨迹 |
 | [Arbor](docs/arbor.md) | 分支演化 | 假设树与经验向上归纳 | Train 轨迹、dev 分数 |
 
-Arbor 为新接入算法；原框架图和下方实验表仍对应十二方法的已有研究，尚无 Arbor 的真实模型结果。
+Arbor 为新接入算法；原框架图和下方实验表仍对应十二方法的已有研究。已有一次小规模 Arbor × Codex × WorkBench smoke，覆盖与限制见 [Arbor 验证说明](docs/arbor.md#真实模型验证)，该记录不代表性能收益。
+
+SkillOpt 的快慢更新、选优规则和参数预算见 [SkillOpt 使用说明](docs/skillopt.zh-CN.md)。
+
+指令搜索方法的使用说明见 [OPRO](docs/opro.zh-CN.md)、[GEPA](docs/gepa.zh-CN.md) 和 [EvoPrompt](docs/evoprompt.zh-CN.md)，分别介绍其反馈来源、选优规则和预算单位。
+
+经验积累方法见 [ACE](docs/ace.zh-CN.md) 的 playbook 策展与 offline/online 选优，以及 [Evo-Harness](docs/evo-harness.zh-CN.md) 的任务流原生技能编译。
+
+目录编辑方法见 [AHE](docs/ahe.zh-CN.md)、[ADAS](docs/adas.zh-CN.md) 和 [Meta-Harness](docs/meta-harness.zh-CN.md)，分别说明编辑基线、证据来源与最终选择规则。
 
 这些方法均适配了 FlashRSI 的资源与评估接口。Evo-Harness 和 Harness 资源编辑方法需要 Agent Worker；具体条件见[选型与运行指南](docs/running-experiments.md#choose-an-algorithm-and-harness)。
 

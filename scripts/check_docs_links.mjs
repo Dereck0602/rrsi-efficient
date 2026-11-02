@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
-import { extname, join, resolve } from 'node:path'
+import { extname, join, resolve, sep } from 'node:path'
 
 const root = resolve('docs/.vitepress/dist')
 const base = process.env.DOCS_BASE || '/FlashRSI/'
@@ -36,7 +36,7 @@ for (const path of htmlFiles) {
     if (!local || local.endsWith('/')) local += 'index.html'
     else if (!extname(local)) local += '.html'
     const destination = resolve(root, local)
-    if (!destination.startsWith(`${root}/`)) {
+    if (!destination.startsWith(`${root}${sep}`)) {
       errors.add(`${source}: outside build directory: ${raw}`)
       continue
     }

@@ -35,6 +35,24 @@ algorithm:
 
 This fragment only illustrates role selection. Keep the rest of the destination method's example and supply both roles' credentials and endpoints.
 
+LLM, MiniAgent, Claude Code, Codex, Pi, and Hermes Workers receive shared role
+instructions on each `ask` or `edit` call.
+These are appended to the harness's native system instructions (Codex uses its
+native developer instructions); Claude Code retains the `claude_code` preset.
+The algorithm's request still defines the search strategy and reply format.
+`ask` requests analysis or text, while `edit` requests a focused change in the
+supplied working directory. The shared instructions require evidence-based,
+reusable changes and honest validation reports, and reserve benchmark evaluation
+and version selection for the framework unless explicitly delegated.
+
+Ordinary Target `run` and `rollout` calls receive no Worker supplement. This is
+behavioral guidance, not filesystem or process isolation, and does not change
+tool permissions. The supplement is recorded in the call's `RunConfig`, not in
+Snapshot resources. Snapshot-local runtimes from older versions or custom Agent
+adapters need the corresponding system-instruction hook to support it; saved
+Snapshots are not rewritten automatically. OpenClaw and OpenCode do not yet
+consume the shared Worker supplement in their native runtimes.
+
 OpenCode is available as a Target and Agent Worker. Its Snapshot excludes the Bun/Node host CLI, TUI,
 server, OAuth account flows, MCP supervisor, and LSP process supervisor; benchmark execution uses the
 shared Agent/container boundary.

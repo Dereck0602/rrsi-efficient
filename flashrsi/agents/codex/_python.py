@@ -406,6 +406,16 @@ async def run(agent, prompt, working_dir):
             settings = copy.deepcopy(native)
             for key, value in overrides.items():
                 _set(settings, key, value)
+            if config.get("_worker_system_prompt"):
+                settings["developer_instructions"] = "\n\n".join(
+                    filter(
+                        None,
+                        [
+                            settings.get("developer_instructions"),
+                            config["_worker_system_prompt"],
+                        ],
+                    )
+                )
             settings["sandbox_mode"] = config.get(
                 "sandbox", native.get("sandbox_mode", "workspace-write")
             )
