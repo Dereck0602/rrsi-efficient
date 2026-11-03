@@ -96,8 +96,4 @@ harness。示例使用 SearchQA 和 MiniAgent，属于框架内的机制验证�
 使用 Terminus-2、Terminal-Bench 2.1 的 89 个 evolve 任务及
 `T=20/k=2/m=2/w=3/delta=0.017/beta1=44.5/w_s=0/repair_rounds=5/invalid_missing_frac=0.2`。
 框架默认 Terminal-Bench 数据仍是 2.0；严格复现需要核对起始 harness、数据、模型
-和执行限制。真实模型收益及论文实验结果尚未验证。
-
-固定上游输出在 `tests/fixtures/rrsi_upstream.json`，用于核对选择、预算、标签与
-校准。行为测试覆盖兄弟证据隔离、唯一历史、审查修复、失败分母、完整成本、三种
-调查视角与追问；localhost 模拟服务测试验证原生 Agent/Worker 调用与文件编辑。
+和执行限制。

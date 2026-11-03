@@ -44,9 +44,11 @@ def test_partition_grading_and_prompt_isolation(tmp_path, cls, row):
             assert "SECRET_LABEL" not in prompt
             return Trajectory(output=task.ground_truth)
 
-    good = bench.grade(asyncio.run(Recorder().rollout((task,))))[0]
+    with pytest.raises(NotImplementedError, match="bind an execution integration"):
+        asyncio.run(Recorder().rollout((task,)))
+    good = bench.grade((Trajectory(task=task, output=task.ground_truth),))[0]
     assert good.metrics == {"accuracy": 1.0}
-    assert task.env is None
+    assert task.env == "supplied_context"
     forged = replace(task, ground_truth="999", metadata={"input": "other"})
     bad, failed = bench.grade(
         (
@@ -199,7 +201,7 @@ def test_launcher_and_unsupported_modes(cls, row):
     )
     plan = _launch._plan(cfg)
     assert plan["extras"] == ["all"]
-    assert plan["prerequisites"] == []
+    assert plan["prerequisites"] == ["Docker CLI and a running Linux daemon"]
     with pytest.raises(ValueError, match="scoring"):
         cls({"scoring": "official"})
     with pytest.raises(ValueError, match="mode"):

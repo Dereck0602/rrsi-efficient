@@ -1,7 +1,7 @@
 # 轻量基准接入：BBEH 与 SuperGPQA
 
 这两个 2025 年发布的基准复用 `QABenchmark`、既有划分器、Agent 文本执行和
-runner。无需 Docker、GPU、搜索服务、Judge 或新的 Python 依赖；可使用 MiniAgent
+runner。Target 每题在独立 Linux 容器中执行，需要 Docker CLI 与运行中的 Linux daemon，容器须能访问模型端点。无需 GPU、搜索服务或 Judge；可使用 MiniAgent
 或 Claude Code，算法自身的组件与 Worker 前置条件仍然生效。
 
 | 名称 | 内容与数据规模 | 固定数据来源 | 评分范围 |

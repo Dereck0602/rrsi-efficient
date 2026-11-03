@@ -1,129 +1,117 @@
-# DarwinX 接入
+# DarwinX
 
-本实现把 DarwinX 的核心搜索机制移植到 Lite 的 `Algorithm`、`Snapshot`、
-`Worker` 与 `Results` 接口，不依赖 Beagle 的 campaign driver。
+**English** · [简体中文](./darwinx.zh-CN.md)
 
-实现只包含算法入口与提示模板。archive 是普通字典记录，可直接用于提示和实验记录；
-被评估的版本保留原生 `Snapshot` 和各轮 `Results`，不引入 population/评估类型或行转换层。
-`_measure` 只计算重复评估的逐题均值；总分和轨迹证据读取 `Results`。
-父节点选择、两阶段准入、目录编辑分别留在算法自身的方法中，文件提交、记录和最终提升复用基类。
+[All algorithms](./integrations/algorithms.md) · [Example configuration](../examples/darwinx.yaml)
 
-来源：[论文](https://arxiv.org/abs/2608.07545)、
-[官方 Beagle](https://github.com/SalesforceAIResearch/Beagle/tree/165343b46a85b5d28c6370e6197ac665c7eda871/beagle/algorithms/darwinx)。
-核对的上游 revision 为 `165343b46a85b5d28c6370e6197ac665c7eda871`，主要参考
-`vendor/evolve/preserve_extend.py`、`parent_selection.py`、`merge_selection.py`、
-`pipeline.py` 及 `config.py`。这是机制移植，不是原始实验的完整复现。
+DarwinX searches harness versions under a preserve-and-extend contract. Candidates must pass a cheap screen and fresh full-train confirmation before becoming mutation parents. Rejected but fully measured branches can still contribute complementary capabilities through recombination. Final selection uses the highest stored train score among admitted versions, including the seed; dev is unused.
 
-## 搜索流程
+## Requirements
 
-1. 在整个 `train` 池上重复评估 seed，建立逐任务均值和初始已解决集合。
-2. 从已确认的种群选父节点：默认一半概率按累计 lineage gain 选最优，
-   另一半概率从可选父节点均匀采样，允许建立旁系。
-3. Worker 编辑父节点 checkout，读取原始成功/失败轨迹、保留契约、archive 和共享经验。
-4. 在随机 train 子集上，以相同任务、相同重复次数分别测父节点和候选。
-   存在逐题正向变化且回退质量不超过 `screen_regression_tolerance`，才支付全池确认成本。
-   低成本筛选允许有限 trade，以便测出可供重组的 specialist；筛选通过不代表准入。
-5. 在整个 train 池上重新、分别重复测父节点和候选，执行 preserve-and-extend 判定。
-   只有确认通过的候选才成为下一轮 mutation 的父节点。
-6. 每个已测候选都进入 archive，包括筛选失败、确认失败、分数持平的变体。
-   每次测完调用 Worker 蒸馏经验，下一轮可读取被拒绝方案的得失。
-7. 达到重组 cadence 时，从完整确认过的 archive（含被拒绝的 specialist）寻找互补对。
-   Worker 编辑主版本 checkout，其内部临时提供共同祖先与 donor 的完整 Snapshot checkout。
-   Worker 对照实际文件整合改动，包含新增、删除、二进制与可执行权限。
-   参考目录使用相对路径，随编辑目录一起传给容器 Worker；退出 checkout 后自动清理，再由主版本 `commit`。
-   重组还要保留双方已解决任务的 union。
-   没有互补对时执行普通 mutation。同一对在一次 run 中只尝试一次重组。
-8. 最后提升已确认成员中 train 均值最高者，平分保留更早成员；runner 随后只测一次 `test`。
+Train must be non-empty and have unique `task_id` values. Every observed per-task primary metric must be in `[0, 1]`; this is checked when evaluations return. Dev is not required by this algorithm. Train supplies search evidence, admission decisions, and final selection, so its scores are not independent evidence of generalization. The runner evaluates the selected Snapshot on test after search.
 
-## 准入契约
+The Worker must be a file-editing Agent (`algorithm.worker.type: agent`), with its own model and connection settings. `evolve_scope = {"*"}` permits editing all components the Target declares. Runtime-code changes require a Target that exposes that code; the algorithm does not open closed harness internals. See [harness integrations](./integrations/harnesses.md).
 
-每次重复都独立执行一整批任务。逐题分数为 primary metric 的 **avg@k**：
-`p[t] = mean(score[t, trial])`，不取 best-of-k，也不把重复 task_id 塞进同一批 rollout。
-primary metric 必须在 `[0, 1]`，train 非空且 task_id 唯一。
+## Run a small example
 
-mutation 的确认判定为：
-
-```text
-gain = sum(candidate[t] - parent[t])
-regression_mass = sum(max(parent[t] - candidate[t], 0))
-accept = gain > 0
-         and regression_mass <= regression_tolerance
-         and no inherited solved task falls below solved_threshold
-```
-
-浮点边界使用 `1e-12` 容差。回退质量是逐题下降量的**和**，不是平均下降。
-默认 `regression_tolerance: 0`，所以一题下降不能靠另一题的提升抵消。
-`solved_threshold: 1` 表示只有所有确认重复均成功的任务才计入已解决集合；
-该集合沿 lineage 累积，启用非零回退容差也不能丢掉已解决任务。
-
-重组时，gain 仍相对 primary 计算；回退参考改为两个父节点逐题均值的 `max`，
-已解决 invariant 则取两个 lineage invariant 和两个父节点已解决任务的 union。
-因此合并出双方能力的 union 就能扩展 primary，不要求额外解决 union 之外的新任务。
-所有确认比较都重新评估双方，以相同样本数、相同完整任务池计算，
-不会拿一轮筛选分数和多轮确认分数作比较。
-
-重复评估用于减少单次幸运运行的影响，当前没有置信区间或显著性检验；
-有限次数测得的保留不代表对所有未见任务的能力保证。
-
-## 配置与成本
-
-见 [examples/darwinx.yaml](../examples/darwinx.yaml)。现有 CLI 可直接覆盖这些字段：
+Follow [Installation](./guide/installation.md), configure the Target and Worker connections in [examples/quickstart.yaml](../examples/quickstart.yaml), and run from the repository root:
 
 ```bash
-uv run flashrsi run --config examples/darwinx.yaml \
-  --algorithm.max_steps 2 --algorithm.merge_every 0 \
-  --algorithm.confirm_samples 2 --benchmark.limit 9
+flashrsi run --config examples/quickstart.yaml \
+  --algorithm darwinx \
+  --algorithm.worker.type agent \
+  --algorithm.worker.name miniagent \
+  --algorithm.worker.max_turns 30 \
+  --algorithm.max_steps 1 \
+  --algorithm.screen_size 2 \
+  --algorithm.screen_samples 1 \
+  --algorithm.confirm_samples 2 \
+  --algorithm.merge_every 0
 ```
 
-| 字段 | 默认值 | 含义 |
-|---|---:|---|
-| `max_steps` | 10 | 编辑尝试次数，mutation/recombination 都占一轮；非法编辑也占一轮 |
-| `screen_size` | 3 | 随机筛选子集大小，不超过 train 大小 |
-| `screen_samples` | 1 | 每个筛选任务的重复数 |
-| `confirm_samples` | 3 | 每个确认任务的重复数，不能小于筛选重复数 |
-| `screen_regression_tolerance` | 1.0 | 筛选容许的逐题回退质量，用于发现互补 specialist |
-| `regression_tolerance` | 0.0 | 正式确认允许的回退质量 |
-| `solved_threshold` | 1.0 | 已解决任务的 avg@k 阈值，范围 `(0, 1]` |
-| `exploration_probability` | 0.5 | 从已确认可选父节点均匀采样的概率 |
-| `merge_every` | 3 | 每几轮尝试一次重组；0 禁用，无互补对时退回 mutation |
-| `seed` | 42 | 父节点、筛选子集采样的随机种子，不控制模型采样 |
-| `max_evidence_chars` | 24000 | 每个证据块的字符上限；archive/经验优先显示最近内容 |
+This requests one mutation attempt with two confirmation repetitions and no recombination. Confirmation happens only if the candidate passes screening. Append `--check-only` for initialization without model calls or remote authentication validation. The dedicated [DarwinX configuration](../examples/darwinx.yaml) enables periodic recombination. See [Configuration & CLI](./guide/configuration.md) for overrides.
 
-设 train 大小为 N，筛选大小为 s，筛选重复数为 q，确认重复数为 k：
-seed 成本为 `N*k` 个任务执行。普通有效编辑筛选成本为 `2*s*q`，
-通过筛选再加 `2*N*k`；重组对应为 `3*s*q` 与 `3*N*k`。
-每轮有效编辑调用一次 `worker.edit`，每个已测候选另调用一次 `worker.ask` 蒸馏经验。
-无改动、重复文件内容或提交非法的编辑不评估、不生成经验。
-这些是目标执行数，不是模型请求数；一个 agent 任务可能发起多次模型请求。
+## Search and selection
 
-`train` 用于搜索、诊断和最终择优；`dev` 当前不用，`test` 不进入 Worker 或搜索。
-这与 ADAS 当前的 dev 搜索协议不同。目标和 Worker 分别显式设置自己的 `llm`。
-Worker 必须为 `type: agent`，不能使用纯文本 LLM Worker。
-演化范围为目标声明的全部 component，不按具体 harness 或 benchmark 名称分支。
+1. Evaluate the seed on all train tasks `confirm_samples` times. Store its mean score and per-task means; tasks at or above `solved_threshold` become the initial preservation set. The seed is an eligible parent and final-selection fallback.
+2. Select a mutation parent from admitted versions. With probability `exploration_probability`, sample uniformly; otherwise maximize `(cumulative_gain, score)`. Equal ranking keys retain the earlier archive member. Cumulative gain follows the primary-parent lineage and is not the same ranking as final score.
+3. At every `merge_every`-th attempt, try recombination first. Both branches must have reached full confirmation and each must have solved a task the other did not. Admission is not required here. Rank unused pairs by solved-union size, then the lower of their scores; remaining ties follow archive enumeration order. The higher-scoring branch is primary, with the earlier branch primary on a tie.
+4. Give the Worker the primary checkout, parent records, preservation set, primary traces, recent archive entries, lessons, declined edits, and component rules. For recombination, temporary ancestor and donor checkouts are available inside the working directory. The prompt asks the Worker to treat them as read-only; they are removed before committing the candidate.
+5. Clean runtime artifacts and commit. Invalid resource changes, unchanged files, and duplicates of any archived harness are declined without evaluation or lesson extraction. They still consume an attempt. A selected merge pair is marked attempted even if its edit is declined; if no unused complementary pair exists, use mutation.
+6. Screen the candidate on a random train subset, re-evaluating every parent on the same tasks with the same repetition count. A passing screen buys fresh confirmation of every parent and the candidate on the whole train pool. Apply the gates below.
+7. Archive every evaluated candidate, including screen failures and confirmation failures. Ask the Worker for a `<LEARNINGS>` summary of that experiment. Only a candidate passing confirmation joins the mutation-parent pool and extends its inherited preservation set with newly solved tasks.
+8. Promote the admitted version with the highest stored train score. Exact ties retain the earlier archived version. Selection does not re-evaluate or refresh old archive scores; it can keep the seed even when a candidate beat its parent's fresh confirmation measurements.
 
-## 记录与移植边界
+The Target's active version changes only at final promotion. `donor_id` records recombination input; Snapshot ancestry follows the primary parent only. Common-ancestor lookup also follows those primary-parent links.
 
-原始每次重复的轨迹由 `_evaluate` 保存，`decision` 记录逐题均值、样本数、
-gain、regression mass、实际父节点参考分数、invariant 丢失、确认级别及准入状态。
-Snapshot 保存文件、版本身份和父子关系。mutation 和重组都从主版本 checkout/commit，
-记录中的 `snapshot_id/parent_id` 直接来自 Snapshot；重组额外记录 `donor_id` 表示改动来源，
-它不作为版本父节点，也不参与共同祖先查找。临时参考目录不进入候选 Snapshot。
-`learnings` 保存每个候选的共享经验，最终 promote 记录完整 archive 和被拒绝编辑。
+## Screening and confirmation gates
 
-与完整 Beagle 的主要差异：
+Each repetition executes a complete requested task batch. A task's score is its mean over repetitions (**avg@k**), not best-of-k or pass@k. Let `c[t]` be the candidate's mean, `p[t]` the freshly measured primary parent's mean, and `r[t]` the maximum mean across the freshly measured parents:
 
-- 用 Lite 的 Snapshot 和实验记录替代 Git worktree、SQLite、campaign supervisor；不实现恢复运行。
-- 使用一个固定 train 池、确定的数值门禁和 lineage solved invariant。
-  上游有可配置的 reasoned verdict、fractional gate、任务主题和动态子集等更复杂的策略。
-- exploration 是对可选节点均匀采样；上游 `mixed_high_score` 的 broaden 分支仍以累计 gain 排序，
-  再以子节点数等打破平局。互补对这里按 union 大小排序，没有移植上游 utility/risk 自动门禁。
-- mutation 没有内部多轮 analyze/implement/review 和回退修复循环；每次编辑占一轮。
-- 支持两分支重组，不实现 N-way merge、prune/consolidate、教师模型、
-  独立 verifier/anti-cheat、跨 benchmark/mixture/heldout 门禁、trace QC 或集群调度。
-  提示中的通用化约束不等于独立 anti-cheat 验证。
-- 轨迹和 archive 通过 Lite 的字符预算截断；重组文件由 Worker 直接读取 checkout。
+```text
+delta[t] = c[t] - p[t]
+gain = sum(delta[t])
+regression_mass = sum(max(r[t] - c[t], 0))
 
-已验证：离线目录编辑在 MiniAgent 和 Claude Code 上的协议、逐题回退拒绝、
-avg@k、幸运筛选后确认失败、确认父节点选择、被拒绝 specialist 重组与 union 保留、
-非法编辑后的继续搜索，以及 runner 的配置、凭据脱敏和最终单次 test。
-尚未验证：真实付费模型的 DarwinX 演化效果、真实环境 benchmark 的端到端表现及论文分数。
+screen passes:
+    any delta[t] > 1e-12
+    and regression_mass <= screen_regression_tolerance + 1e-12
+
+confirmation passes:
+    gain > 1e-12
+    and regression_mass <= regression_tolerance + 1e-12
+    and every inherited invariant task has c[t] >= solved_threshold
+```
+
+For mutation, `r[t] = p[t]`. For recombination, regression is measured against the per-task maximum of both parents, while gain remains relative to primary. Recombination preserves the union of both inherited invariants and both parents' solved sets. Combining their existing capabilities can therefore extend primary without solving a task outside that union.
+
+Regression mass is a **sum of per-task drops**, not an average or the net change. Default confirmation tolerance is zero, so gains elsewhere cannot compensate for a drop beyond numerical tolerance. The invariant gate remains mandatory even with nonzero regression tolerance. Screening does not enforce the full invariant; a local improvement can reach confirmation even if its screen-wide net gain is nonpositive.
+
+With `solved_threshold: 1`, a task counts as solved only when every observed repetition scores 1. Accepted versions accumulate solved tasks along their lineage. These are finite-sample checks, not confidence intervals, significance tests, or guarantees on unseen tasks. Fresh parent measurements do not overwrite their stored archive scores or solved sets.
+
+## Parameters and cost
+
+Implementation defaults belong under `algorithm`.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `max_steps` | `10` | Editing attempts; integer, at least 1. Mutations, recombinations, and declined edits all count. |
+| `screen_size` | `3` | Screening task count; integer, at least 1, capped at train size. |
+| `screen_samples` | `1` | Repetitions for each screened version; integer, at least 1. |
+| `confirm_samples` | `3` | Repetitions for the seed and each confirmed version; integer, at least `screen_samples`. |
+| `screen_regression_tolerance` | `1.0` | Nonnegative screening regression-mass allowance. |
+| `regression_tolerance` | `0.0` | Nonnegative confirmation regression-mass allowance. |
+| `solved_threshold` | `1.0` | Per-task mean needed for solved status; greater than 0 and at most 1. |
+| `exploration_probability` | `0.5` | Uniform mutation-parent sampling probability, in `[0, 1]`. |
+| `merge_every` | `3` | Try recombination every this many attempts; integer, at least 0. Zero disables it. |
+| `seed` | `42` | Integer seed for parent and screen-task sampling, not model sampling. |
+| `max_evidence_chars` | `24000` | Character limit per serialized evidence block; integer, at least 1. Archive, lessons, and declines are presented newest first. |
+
+For N train tasks, s = `min(screen_size, N)`, q = `screen_samples`, and k = `confirm_samples`:
+
+| Stage | Target task executions |
+| --- | --- |
+| Initial seed | `N * k` |
+| Mutation screen | `2 * s * q` |
+| Mutation confirmation, if reached | `2 * N * k` additional |
+| Recombination screen | `3 * s * q` |
+| Recombination confirmation, if reached | `3 * N * k` additional |
+
+Each attempt calls `worker.edit` once. Each evaluated candidate also calls `worker.ask` once for lessons, even when rejected. Declined edits skip both candidate evaluation and lesson extraction. These counts exclude final test, native model/tool turns, and backend retries; they count task executions, not API requests. Worker failures and evaluation exceptions propagate; there is no algorithm-level repair loop.
+
+## Inspect an experiment
+
+Evaluation records retain raw repetitions. Admission decisions include `per_task`, `samples`, `fidelity`, `accepted`, `gain`, `regression_mass`, `lost_invariant`, `delta`, and `parent_per_task`. The last field contains the fresh measurements used for the comparison. `fidelity: confirmation` means full confirmation was performed; it does **not** imply acceptance.
+
+`kind: admit` records an evaluated archive member, including rejected members. `kind: decline` records an unmeasured edit. `learnings` stores Worker summaries; final `promote` records the selected Snapshot, archive, lessons, and declined edits. A screen-only member's score covers its sampled tasks and must not be ranked as a full-pool score.
+
+## Source and adaptation
+
+The [implementation](../flashrsi/algorithms/darwinx/__init__.py) pins [SalesforceAIResearch/Beagle](https://github.com/SalesforceAIResearch/Beagle/tree/165343b46a85b5d28c6370e6197ac665c7eda871/beagle/algorithms/darwinx) revision `165343b46a85b5d28c6370e6197ac665c7eda871`, particularly `vendor/evolve/preserve_extend.py`, `parent_selection.py`, `merge_selection.py`, and `pipeline.py`. This is a mechanism port, not a reproduction of the complete upstream campaign.
+
+- FlashRSI Snapshot/Worker/Benchmark interfaces replace Git worktrees, SQLite state, and campaign supervision; cross-process search resume is not implemented.
+- A fixed train pool, numeric gates, and lineage invariants replace the upstream's broader configurable verdict and task-selection machinery.
+- Local exploration samples eligible parents uniformly. Upstream's `mixed_high_score` broadening still ranks cumulative gain and score, then uses child counts and other tie breakers. Local pair selection uses solved-union size and scores instead of upstream utility/risk gates.
+- Each mutation uses one edit call; there is no internal analyze/implement/review-and-repair sequence. Recombination supports two branches, not N-way merging or pruning/consolidation.
+- Teacher models, independent verifier/anti-cheat checks, cross-benchmark or held-out admission gates, trace quality control, and cluster scheduling are not implemented. Prompt instructions alone are not an independent anti-cheat check.
+- Prompt evidence is bounded by character limits; recombination source files are read from checkouts. The default algorithm uses train for final selection; a separately authorized experiment's dev-selection protocol does not change this default.

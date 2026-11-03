@@ -103,9 +103,3 @@ A batch can execute its tasks up to `max_reflection_rounds` times and make that 
 The [implementation](../flashrsi/algorithms/ace/__init__.py) and [playbook protocol](../flashrsi/algorithms/ace/_playbook.py) name FlashRSI commit `5efe9b438483710060183c6c3ecbc5062b410a58` as the port reference and `ace-agent/ace` commit `82709de050e1db6e6ef2f07bcb0393560b94992a` as upstream. The original migration record did not independently verify that upstream revision; this guide describes local behavior.
 
 Local choices include an instruction suffix instead of a skill, explicit training answers in evidence, retries only between diagnoses, dev scheduling independent of successful ADDs, and restoration through the existing Snapshot. No separate Trainer/Recipe/checkpoint layer is introduced. [Prompts](../flashrsi/algorithms/ace/_prompts.py) define reply protocols.
-
-## Validation scope
-
-[Selection tests](../tests/test_ace_selection.py) cover offline incumbent retention, including ties. Local historical report `docs/smoke-banking-bm25-steps100-ace-miniagent-20261028.json` records ACE × MiniAgent × τ³ Banking as `flow_passed`, with train, dev, Worker, and test records. Dev and test rewards were zero; completion does not establish improvement or online-mode coverage.
-
-The report is a local ignored artifact, not a public result link. This documentation update makes no new model calls. Report mode, passes, reflection/retry coverage, curation decisions, and final selection; simulated tests and initialization do not replace a real combination run.

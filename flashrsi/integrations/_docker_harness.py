@@ -37,7 +37,8 @@ async def _setup(docker, name, network, payload, config, timeout):
         "while :; do sleep 3600; done",
         timeout=timeout,
     )
-    await docker("network", "connect", network, name, timeout=timeout)
+    if network is not None:
+        await docker("network", "connect", network, name, timeout=timeout)
     await docker("start", name, timeout=timeout)
     await docker("exec", name, "mkdir", "-p", _ROOT, timeout=timeout)
     await docker("cp", str(payload) + os.sep + ".", f"{name}:{_ROOT}", timeout=timeout)

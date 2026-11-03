@@ -162,6 +162,7 @@ class AIME(QABenchmark):
                 r"in \boxed{...}."
             ),
             ground_truth=answer,
+            env="supplied_context",
             metadata={
                 "answers": (answer,),
                 "source_split": source_split,

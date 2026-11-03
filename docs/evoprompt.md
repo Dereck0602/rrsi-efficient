@@ -84,7 +84,3 @@ The final `promote` record supplies selected and baseline scores plus the final 
 The [implementation](../flashrsi/algorithms/evoprompt/__init__.py) pins `microsoft/EvoPrompt` to commit `2e235c9410e38d531dabfae7fdd9cbded1577373`. The local port evolves one native instruction file through FlashRSI Snapshots and full-dev fitness. The [prompt module](../flashrsi/algorithms/evoprompt/_prompts.py) contains initialization, GA, and DE templates; replies use `<prompt>...</prompt>`.
 
 The preserved population and operator mechanisms do not imply reproduction of upstream model settings or experimental results. In particular, fixed population size can include duplicate or carried members, while final selection preserves the best dev incumbent across generations.
-
-## Validation scope
-
-These commands are small-run recipes, not new measured results. A GA run does not validate DE, and an operator returning only carried members does not cover candidate evaluation. Report the variant, parent/survivor settings, evaluated versus carried members, and final selection. Initialization alone cannot establish evolution success or held-out gains.

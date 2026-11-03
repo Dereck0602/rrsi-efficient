@@ -61,7 +61,3 @@ The final `promote` decision includes `score`, `baseline_score`, and the full `h
 ## Source and adaptation
 
 The [prompt module](../flashrsi/algorithms/opro/_prompts.py) pins `google-deepmind/opro` to commit `a76bdce2cbf6d4a0d1e570a6fcfe17be9c2abdd7`. The local port uses one native instruction file rather than upstream question-insertion positions, and supplies sampled task outputs and metrics from FlashRSI trajectories. See the [search implementation](../flashrsi/algorithms/opro/__init__.py) for the current behavior.
-
-## Validation scope
-
-The command above is a small-run recipe, not a reported experiment result. Initialization does not validate proposal quality or full evolution. A useful smoke records whether novel instructions were produced, train evaluation completed, and final promotion followed the scored history. A better train score alone does not establish held-out improvement; report final test separately.

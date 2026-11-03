@@ -105,9 +105,3 @@ The repository's [SearchQA reproduction record](./searchqa-deepseek-reproduction
 Local choices include a fixed edit budget, component-scoped multi-file JSON patches, `seed + epoch` shuffling, and minibatch splitting before success/failure grouping. Both fast and slow resource candidates use a strict dev gate. Reproducing an experiment also requires matching model settings, initial skills, dataset members, grading, and recovery behavior.
 
 Implementation: [search loop](../flashrsi/algorithms/skillopt/__init__.py), [prompts](../flashrsi/algorithms/skillopt/_prompts.py), and [patch protocol](../flashrsi/algorithms/skillopt/_patch.py).
-
-## Validation scope
-
-The [SearchQA reproduction record](./searchqa-deepseek-reproduction.md) documents larger historical runs with MiniAgent and Claude Code, including protocol differences and recovery attempts. Those results belong to their recorded configurations.
-
-The quickstart configuration is deliberately limited to one fast update. Initialization checks do not establish real-model success, and a fast-only smoke does not validate slow guidance or meta-skill behavior. When reporting a run, name the algorithm, Target, Benchmark, budget, and phases actually exercised.

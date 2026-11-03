@@ -1,60 +1,22 @@
-# ModularRSI 接入
+# ModularRSI
 
-来源：[论文](https://arxiv.org/abs/2609.14857)与
-[官方代码](https://github.com/IQuestLab/ModularRSI/tree/b5c72c36b0d08ff93f00ee202a8fbdebe849dfb9)，
-参考 `src/harbor/agents/terminus_2_modular/self_evo/`。
-本实现根据方法独立编写代码和提示，未复制上游实现、提示或演化后的函数。
-这是固定模型下的核心机制移植，尚未复现论文实验分数。
+**English** · [简体中文](./modular-rsi.zh-CN.md)
 
-## 演化流程
+[All algorithms](./integrations/algorithms.md) · [MiniAgent configuration](../examples/modular_rsi.yaml) · [Claude Code configuration](../examples/modular_rsi_claude_code.yaml)
 
-默认五个模块都从相同的初始 Snapshot 出发，分别演化 Agent Loop、Tool Use、
-Observation Management、Context Management 与 Task Completion Detection。
-也支持 `prompt / skill / hook` 三个原生扩展模块，适用于 Claude Code 等提供
-外部扩展的 harness。三模块使用相同的独立演化与集成流程，但演化的是外部
-扩展，并不等价于修改上述五种运行时机制的源码。
-实现顺序执行独立分支；模块间不共享中间修改或轨迹记忆。
+ModularRSI evolves independent module branches from one seed, then combines and refines them. Repeated executions of the same train task supply successful and failed traces for diagnosis. File checks, diff review, and execution gates decide whether a branch advances; there is no train/dev score-improvement gate or best-score archive. A candidate can replace its parent despite equal or lower task scores if it passes those checks.
 
-每个 epoch 打乱 Benchmark 的 train 集，逐 batch 对当前版本重复执行 `num_rollouts` 次。
-同一任务有成功和失败时进行对比；全部失败时寻找该模块记忆中的历史成功，
-找不到则做失败诊断；全部成功时寻找效率改进。Worker 输出带目标位置、
-支持任务 ID、原因与修改建议的 findings。同一文件合并建议，按不同支持任务数
-排序，取前 `edit_budget` 个目标进行一次目录编辑。
+## Requirements
 
-轨迹超出提示预算时，每个任务保留成功、失败各一个代表样本及历史成功，
-保留任务 ID、分组、样本数量、状态与评分，再均匀压缩问题、输出、错误和轨迹文本。
-完整轨迹与历史成功记忆不被截断。预算连这些摘要结构都容纳不了时明确报错。
+Train must be non-empty, its task IDs unique and disjoint from dev/test IDs. Dev is not used for diagnosis, candidate selection, or Worker prompts. The runner evaluates the final selected Snapshot on test. The algorithm uses the current `benchmark.train`; an independent external evolution dataset is optional.
 
-Worker 使用自己的 harness 和运行配置，通过 `worker.edit(checkout, prompt)`
-编辑目标的文件。算法不切换 Worker Snapshot，也不要求 Worker 与 target 是
-同一种 Agent、共享 root 或组件规则；只要求两个独立实例以及文件编辑能力。
-目标的当前候选只用于 rollout 与 checkout。目标执行失败不会把 Worker 的
-执行资源一起替换成故障版本。
+The Worker must be a separate Agent instance with `algorithm.worker.type: agent`. It keeps its own harness resources, model, and connection settings while editing Target checkouts. Target and Worker may use different harnesses. The Target's active Snapshot changes only at final promotion, so a broken candidate does not replace the Worker's execution resources.
 
-每次候选经过文件范围与 Python 编译检查、完整 diff review、当前 batch 的
-随机任务执行验证。执行正常但答案错误不等于运行故障；不要求分数严格提升。
-review 拒绝或运行错误则保留前一版本。非法编辑消耗本次 batch 的尝试；
-Worker 失败、分析/review 协议错误中止实验，由框架保存已有记录。
-rollout/评分协议异常记录为整批执行失败证据，不假定其中哪个任务触发异常，
-仍允许 Worker 根据错误继续修复。
+`algorithm.modules` must name either all five runtime modules or all three extension modules below. Every module needs a non-empty list of existing Target Snapshot files. `evolve_scope = {"*"}` permits Target components generally, while module file lists further restrict each edit.
 
-独立演化结束后，将所选各分支的原生 `Snapshot.check_out()` 临时放到 seed
-的编辑目录中。Worker 读取这些完整版本，把各模块的修改集成到 seed；共享
-文件也由 Worker 集成，不使用 AST、函数切片或额外的合并协议。参考目录
-通过原生上下文管理器清理，然后才 `_commit`，不会进入候选 Snapshot。
-集成编辑同样检查文件范围、编译和完整 diff review。
+## Module boundaries
 
-随后对合并版本执行整个演化集的检查，并在集成阶段重新诊断与编辑，解决
-模块冲突与重复机制。每次集成编辑仍能读取原始分支 checkout；不可执行的
-目标版本也能由独立 Worker 修复。最终对整个演化集执行检查；仍有运行错误
-则返回已通过全量检查的初始合并版本，若该版本也未通过则返回 seed。
-最后一次提升后冻结版本，runner 只执行一次下游 `test`。
-`dev` 不参与演化、选优或 Worker 提示。
-
-## 模块边界
-
-`algorithm.modules` 必须完整声明五个运行时模块，或完整声明三个扩展模块，
-每个映射到非空的现有 Snapshot 文件列表。五模块示例：
+For MiniAgent, the five functional modules can map to native files as follows:
 
 ```yaml
 modules:
@@ -65,19 +27,9 @@ modules:
   task_completion_detection: [runtime/agent.py]
 ```
 
-这些名称代表演化的功能职责，文件来自 harness 已有的资源布局。多个模块可以
-共享一个文件；提示要求独立分支只修改所属职责，集成时保留各分支的改进。
-**框架强制约束文件范围，功能职责由提示与 review 约束。** 不再接受
-`文件.py::函数` 配置，也不提供函数级修改权限保证；需要更强隔离时，使用
-本身具有清晰文件边界的 harness。MiniAgent 示例的 `runtime/agent.py` 包含
-多个职责，因此属于共享文件的集成示例。
+Multiple modules may share a file. The framework enforces **file boundaries**; functional boundaries within those files are instructions checked by the Worker review, not AST isolation or function-level permissions. `file.py::function` is not accepted. Changes may add or remove functions, signatures, or decorators inside allowed files; new file paths must already exist in the initial resource mapping to be eligible.
 
-Snapshot 的 component 分类、兼容性、文件权限和版本历史继续由原框架管理；
-算法只使用 `changed_paths()` 判断修改是否在模块声明的文件内。允许修改
-这些文件中的签名、decorator 和新增/删除函数，不另建函数注册或发现系统。
-文件列表指向现有资源；需要新的文件边界时，在初始 harness 中准备它们。
-Claude Code 不能提供闭源 SDK 的可编辑源码，因此不能照搬 MiniAgent 的运行时
-文件映射。可使用三模块配置：
+Claude Code exposes native extension resources instead of its closed runtime source. Its three-module configuration is:
 
 ```yaml
 modules:
@@ -86,75 +38,105 @@ modules:
   hook: [hooks/hooks.json]
 ```
 
-[Claude Code 示例](../examples/modular_rsi_claude_code.yaml)通过独立 `source_dir`
-提供这些初始文件和原生插件清单；提示词作为原生 system prompt 的补充，skills
-与 hooks 通过原生插件加载。默认 Claude Code 资源不添加演化策略。
-文件列表仍是精确路径，分支仅能修改已声明的文件；不自动开放整个扩展目录。
-缺少文件或模块声明不完整时，在启动时明确报错。切换 Agent 时需要同时选择
-对应的模块映射与资源目录，不会按 Agent 名称隐式转换。
+The [Claude Code example](../examples/modular_rsi_claude_code.yaml) supplies these files and native plugin resources through `source_dir`, and uses a separate editing Worker. These are extension branches, not replacements for the five runtime mechanisms. File lists are exact paths, not directory globs. Changing harnesses requires a matching resource directory and module mapping; neither is inferred from the harness name.
 
-填写示例中的任务目录、Target 和 Worker 各自的模型与 API 配置后，通过统一入口启动：
+## Run a small example
+
+Follow [Installation](./guide/installation.md) and configure the Target and Worker separately in [examples/modular_rsi.yaml](../examples/modular_rsi.yaml). Its Target and module mapping use MiniAgent. To use the bundled local SearchQA tasks instead of the example's Terminal-Bench tasks, run from the repository root:
 
 ```bash
-python scripts/run_experiment.py --config examples/modular_rsi_claude_code.yaml
+flashrsi run --config examples/modular_rsi.yaml \
+  --benchmark searchqa \
+  --benchmark.data_path ./examples/data/quickstart.jsonl \
+  --algorithm.num_epochs 1 \
+  --algorithm.integration_epochs 1 \
+  --algorithm.batch_size 1 \
+  --algorithm.num_rollouts 2 \
+  --algorithm.validation_samples 1
 ```
 
-这一实现取舍改变了函数隔离方式及 Worker 的演化方式，并增加了模型参与
-初始合并的编辑与 review；不是与此前实现逐步等价的重构，也未验证收益等价。
+The example's `split_counts: {train: 1, dev: 1, test: 1}` remains in effect. This still evolves five branches and performs integration, so one epoch is not one Worker edit. Append `--check-only` for initialization without model calls or remote authentication validation. For native Terminal-Bench or SWE tasks, configure the corresponding dataset and execution environment; see [Terminal configuration](../examples/modular_rsi.yaml) and [SWE configuration](../examples/modular_rsi_swe_bench.yaml).
 
-## 演化数据
+## Branch evolution and admission
 
-2026-10-28 起，本项目按适配需求允许同一来源的数据集：ModularRSI 默认使用当前
-`benchmark.train` 演化，不要求外部数据集或 `metadata.evolution_source`。
-train 必须非空，任务 ID 唯一，且与 dev/test 的任务 ID 不重合；不同任务可以共享
-领域 policy 文本或环境目录。各 Benchmark 继续负责原生数据与划分校验，runner
-继续在版本选定后执行 sealed test。算法的模块演化、review 和执行 gate 保持原规则。
+1. Start each module branch from the same initial Snapshot and evolve them sequentially in configuration order. Branches do not inherit other modules' intermediate edits or success memories. One seeded random generator is shared across shuffles and execution-gate sampling.
+2. Shuffle train each epoch and divide it into batches. Execute the current branch on each batch `num_rollouts` times. A trajectory is successful only if its status is `finished` and its primary metric reaches `success_threshold`.
+3. Group evidence by task: mixed success/failure is `contrastive`, all successes is `positive`, and no success is `negative`. Negative tasks may receive the most recently stored successful trajectory from an earlier visit in this branch. Prompts ask for same-task contrasts, failure diagnosis, or efficiency improvements as appropriate.
+4. Ask the Worker for findings. Merge findings aimed at the same file, count distinct supporting task IDs, sort by that count, and keep up to `edit_budget` file targets. Equal counts preserve first appearance in the reply. An empty findings list skips editing for that batch.
+5. Make one directory-editing call for the selected findings. Check the actual changed paths, compile changed surviving `.py` files, and reject empty edits. Review the complete diff, including executable-bit changes; if it exceeds the evidence budget, decline rather than review a truncated patch.
+6. If the Worker accepts the diff, execute the candidate once on up to `validation_samples` random tasks from this batch. Every returned trajectory must have status `finished`. Scores still exist, but the gate does not require correct answers or a higher mean.
+7. Advance to the candidate only if these checks pass; otherwise keep the previous branch version. Accepted module edits enter that branch's history. Continue through all batches and epochs, then retain the last accepted version of each branch.
 
-例如，从同一原生任务池显式划分实验数据：
+There is no score tie breaker: an equally scoring candidate can advance, and a lower-scoring candidate can also advance. `success_threshold` controls evidence grouping, not admission. The primary metric is not required to lie in `[0, 1]`; choose the threshold in that metric's units.
 
-```yaml
-benchmark:
-  split_counts: {train: 1, dev: 1, test: 1}
-```
+## Integration and final selection
 
-这项默认适配不追求论文的独立演化来源设置。下述外部数据参数仍可选用；显式使用
-这些参数时，加载器继续执行该模式原有的来源与重合检查。
+After independent branch evolution, the Worker edits a fresh seed checkout while reading temporary checkouts of all final module branches and their accepted-edit histories. It combines changes in shared files through ordinary file editing; the framework does not splice functions or mechanically overwrite one branch with another. Reference directories are removed before committing.
 
-TerminalBench 和 SWEBench 支持可选 `benchmark.evolution_data_path` 与 `evolution_limit`。
-TerminalBench 加载独立的 Harbor 任务目录；SWEBench 加载独立的 SWE 原生记录文件或目录，
-必须包含该加载器要求的任务镜像、基线 commit 及官方评分字段，不能填写 Harbor 任务目录。
-两者都以独立任务替换 `train`，沿用各自原生加载、执行与 verifier 评分；
-原有 `dev/test` 划分保持不变。`limit` 仍限制下游数据，
-`evolution_limit` 单独限制演化数据。未设置这些参数时，原有 benchmark 行为不变。
-一键入口中的相对数据路径以 YAML 所在目录解析；普通 CLI 的模块数据路径仍相对 cwd。
-示例使用绝对路径。
+The initial integration edit passes the same file, compilation, and diff-review gates. If it is declined, use the seed as the combined version. Then execute the combined version on **all train tasks**. A passing combined version becomes the fallback; otherwise the fallback is the seed.
 
-官方独立任务集见
-[ModularRSI_2000_Instances](https://huggingface.co/datasets/IQuestLab/ModularRSI_2000_Instances)。
-需要先下载并解包为 Harbor 任务目录；本次没有加入自动下载器或实际运行这批任务。
-Terminal 示例：[examples/modular_rsi.yaml](../examples/modular_rsi.yaml)。
-SWE 示例：[examples/modular_rsi_swe_bench.yaml](../examples/modular_rsi_swe_bench.yaml)。
-可选外部数据需要用户准备；未提供时直接使用当前数据集的 train。
+Integration refinement starts from the combined version even if that full-train check failed, so the independent Worker can attempt repairs. It repeats contrastive batch evaluation for `integration_epochs`; each batch directly requests an integration edit without a separate findings-analysis call. Edits may touch the union of declared module files, still have access to the original branch checkouts, and pass diff review plus the sampled execution gate.
 
-显式外部模式的加载器拒绝与下游已加载任务重合的 ID、指令或 checksum，SWE 还
-拒绝共用任务镜像。算法统一检查 train 与 dev/test 的任务 ID 隔离，不按来源、
-问题文本或环境目录拒绝同数据集任务。自定义 Benchmark 可以直接提供常规 train。
+The final refined version must pass a full-train execution gate. If it fails, return the fallback. If the initially failing combined version never changed, skip repeating the same final gate and return the fallback directly. This is a fixed fallback order, not a comparison of train/dev scores or a search for the best intermediate integration version. The seed is not separately guaranteed runnable by this fallback mechanism.
 
-## 移植边界与验证
+## Evidence, reply formats, and failures
 
-不引入 population、Member、函数注册管理器或新的 core 接口。
-版本、checkout、评分、Worker 编辑与轨迹、脱敏、提交与最终提升均复用原框架。
-Python 检查只编译修改后的源码；不在宿主上 import 候选代码。原论文的模块专用
-discovery-contract、self-attribute audits、函数库动态发现和逐任务 Function
-Composer 未接入；执行协议使用现有 Agent/Benchmark，diff review 是模型判断，
-不是独立反作弊证明。集成时可删除已声明整文件范围中的重复函数，未实现独立
-Function Merge 阶段。每个 batch 一次编辑，多目标建议由同次编辑处理。
+Findings must be a JSON array. Each item has exactly `target`, `task_ids`, `rationale`, and `change`; the target must be a declared module file, cited IDs must belong to the current batch, and rationale/change must be non-empty strings. The review must be exactly a JSON object with boolean `accept` and non-empty string `reason`. An outer Markdown JSON fence is tolerated by the parser, but prompts request plain JSON. Invalid JSON or schema errors abort the run rather than silently discarding findings.
 
-离线测试覆盖同任务轨迹分组、历史成功、支持任务去重排序、模块独立演化、
-当前候选 checkout 的连续编辑、共享文件集成、文件范围/编译/review/执行拒绝、
-集成修复与回退、独立 Worker 来源、临时参考目录清理、独立 Harbor 数据加载
-和 runner 最终测试。
-另有原生 MiniAgent 协议测试，通过真实 subprocess、SDK 和文件工具修改并合并
-共享 runtime 文件中五个功能位置的修改；模型响应来自 localhost 模拟服务，
-不调用付费模型。
-真实模型收益、真实容器运行与论文结果尚未验证。
+Full contrast trajectories remain in experiment records and branch memory. When prompt evidence is too long, the algorithm retains each task's group, counts, and one recent example of each available polarity, plus historical success, then shortens text fields. If even that structure cannot fit, it raises an error. Normal history and findings blocks use the shared character limit. Integration receives module histories; it does not append integration edits to those module histories.
+
+File/syntax failures and oversized diffs decline an edit; a valid review with `accept: false` also declines it. Worker failures propagate. Contrast evaluation catches `ValueError`, `TypeError`, `KeyError`, and `AttributeError` as batch-level failure evidence without claiming which task failed. Execution gates treat the same exceptions as failure; other exceptions can propagate. There is no immediate retry loop for a declined batch edit, though later batches can diagnose and edit again.
+
+## Parameters and cost
+
+Implementation defaults belong under `algorithm`.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `modules` | `{}` | Required complete five-runtime-module or three-extension-module mapping to existing files; the empty default cannot run. |
+| `num_epochs` | `3` | Epochs per independent module; integer, at least 1. |
+| `batch_size` | `10` | Train tasks per batch; integer, at least 1. |
+| `num_rollouts` | `3` | Repeated executions per task for contrast evidence; integer, at least 2. |
+| `integration_epochs` | `1` | Combined-harness refinement epochs; integer, at least 1. |
+| `validation_samples` | `2` | Distinct tasks sampled from the current batch for each candidate execution gate; integer, at least 1, capped at batch size. |
+| `edit_budget` | `1` | Maximum prioritized file targets after finding consolidation; integer, at least 1. Not the number of edit attempts or a hard changed-file cap within the module. |
+| `success_threshold` | `1.0` | Primary-metric threshold for successful contrast evidence. |
+| `seed` | `42` | Integer seed for train shuffling and gate-task sampling, not model sampling. |
+| `max_evidence_chars` | `60000` | Character limit per evidence block; integer, at least 1. Complete diff review must fit. |
+
+Let M be the module count (5 or 3), N the train size, B = `ceil(N / batch_size)`, E = `num_epochs`, I = `integration_epochs`, R = `num_rollouts`, and V = `min(validation_samples, batch_size)`.
+
+| Work | Target task executions / Worker calls |
+| --- | --- |
+| Contrast evaluation across all branches and integration | `(M * E + I) * N * R` Target executions on a completed run |
+| Sampled candidate execution gates | At most `(M * E + I) * B * V` additional Target executions |
+| Initial combined and final full-train gates | At most `2 * N` additional Target executions |
+| Independent module batches | One analysis call each; at most one edit and one review call each |
+| Initial combination | One edit call and, if file checks pass, one review call |
+| Integration refinement batches | At most one edit and one review call each; no separate analysis call |
+
+The last batch may contain fewer than V tasks. Empty findings and rejected edits reduce the gate and review counts. Final test, native model/tool turns, backend retries, and environment setup are additional. `edit_budget` only truncates prioritized findings; increasing it does not create multiple editing attempts per batch.
+
+## Evolution data
+
+The default uses the configured dataset's train split and does not require `metadata.evolution_source`. Tasks with different IDs may share policy text or environment directories. Benchmark loaders retain their own data checks; the algorithm itself enforces train-ID uniqueness and separation from dev/test IDs.
+
+TerminalBench and SWEBench optionally accept `benchmark.evolution_data_path` and `evolution_limit`. These replace train with an external task collection while preserving the configured downstream dev/test splits. TerminalBench expects native Harbor tasks; SWEBench expects SWE records with its required task image, baseline commit, and scoring fields, not a Harbor directory. Both reuse native loading, execution, and grading.
+
+Explicit external mode adds overlap checks for IDs, task text, and checksums; SWEBench also rejects shared task images. `evolution_limit` limits the external pool independently of the downstream `limit`. The examples use absolute dataset paths; when using relative paths, follow [Configuration & CLI](./guide/configuration.md) and the selected benchmark's path rules. No external source is needed for the local example above.
+
+## Inspect an experiment
+
+`contrast` records keep individual repeated evaluations. `contrast_groups` records task group labels, and `contrast_error` records a batch-level protocol failure. `review` records the model's acceptance and reason; `gate` records execution completion or the caught error. Decisions identify the module and whether an edit was admitted or declined. A review acceptance alone does not mean the subsequent execution gate passed.
+
+Final `promote` records the selected candidate and a `modules` mapping from each module name to its final branch Snapshot ID. The selected integrated Snapshot may differ from every independent branch. Temporary reference directories are excluded from candidate resources.
+
+## Source and adaptation
+
+The [implementation](../flashrsi/algorithms/modular_rsi/__init__.py) pins [IQuestLab/ModularRSI](https://github.com/IQuestLab/ModularRSI/tree/b5c72c36b0d08ff93f00ee202a8fbdebe849dfb9) commit `b5c72c36b0d08ff93f00ee202a8fbdebe849dfb9`, referencing `src/harbor/agents/terminus_2_modular/self_evo/`. The local code and prompts are independently written around FlashRSI interfaces.
+
+- Native harness files replace upstream's discoverable function library and task-aware runtime Function Composer. There is no function-level permission system, discovery-contract enforcement, or self-attribute audit.
+- The three-extension-module mode supports harnesses such as Claude Code; it does not expose the source of the five runtime mechanisms.
+- Branches run sequentially. Integration uses Worker file editing and review, including shared-file conflict resolution and possible removal of redundant functions; there is no separate Function Merge stage.
+- The default permits same-source train/dev/test partitions instead of requiring upstream's independent evolution pool. Optional external data can be configured explicitly.
+- Python checks compile changed source without importing it into the host. Diff review is a model judgment, not an independent anti-cheat proof. Execution and final selection follow the local gates above rather than dev-score optimization.

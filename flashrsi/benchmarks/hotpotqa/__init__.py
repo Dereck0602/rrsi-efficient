@@ -204,6 +204,7 @@ class HotpotQA(QABenchmark):
                 context=_context(row.get("context"), task_id), question=question
             ),
             ground_truth=answer,
+            env="supplied_context",
             metadata={
                 "answers": (answer,),
                 "source_split": source_split,

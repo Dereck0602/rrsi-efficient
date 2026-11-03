@@ -21,9 +21,9 @@ These methods edit a broader resource scope. Start from their own configurations
 | --- | --- | --- |
 | AHE | Successive edits with diagnosis and edit audits. | [Guide](../ahe.md) · [中文](../ahe.zh-CN.md) · [YAML](../../examples/ahe.yaml) |
 | ADAS | A design archive; retains proposals and selects the best. | [Guide](../adas.md) · [中文](../adas.zh-CN.md) · [YAML](../../examples/adas.yaml) |
-| DarwinX | Branches and recombination with repeated outcome checks. | [DarwinX guide](../darwinx.md) · [YAML](../../examples/darwinx.yaml) |
+| DarwinX | Repeated train screening/confirmation; preservation gates and complementary recombination. | [Guide](../darwinx.md) · [中文](../darwinx.zh-CN.md) · [YAML](../../examples/darwinx.yaml) |
 | Meta-Harness | File-based history of code, scores, and traces. | [Guide](../meta-harness.md) · [中文](../meta-harness.zh-CN.md) · [YAML](../../examples/meta_harness.yaml) |
-| ModularRSI | Independent module branches followed by integration. | [ModularRSI guide](../modular-rsi.md) · [YAML](../../examples/modular_rsi.yaml) |
+| ModularRSI | Independent module branches and integration, admitted by review/execution gates rather than score gains. | [Guide](../modular-rsi.md) · [中文](../modular-rsi.zh-CN.md) · [YAML](../../examples/modular_rsi.yaml) |
 | RRSI | History-guided revisions with score/cost admission. | [RRSI guide](../rrsi.md) · [YAML](../../examples/rrsi.yaml) |
 | Arbor | Hypothesis-tree expansion, experiment selection, and upward insight synthesis. | [Arbor guide](../arbor.md) · [YAML](../../examples/arbor.yaml) |
 
@@ -45,7 +45,7 @@ These are local implementation rules, not claims of complete upstream reproducti
 
 ## Interpret results
 
-The thirteen implementations adapt methods to FlashRSI's resource and evaluation interfaces. Registration is a configuration entry point; consult each guide's validation and migration notes for differences from the original method and tested paths. Arbor has a recorded Codex × WorkBench smoke with one task per split; see its [validation scope and limitations](../arbor.md#真实模型验证).
+The thirteen implementations adapt methods to FlashRSI's resource and evaluation interfaces. Registration is a configuration entry point; consult each guide's migration notes for differences from the original method and supported capabilities.
 
 The paper's overall experiment table will be added when its final matrix is available. No aggregate result is claimed here.
 

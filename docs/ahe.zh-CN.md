@@ -93,9 +93,3 @@ flashrsi run --config examples/quickstart.yaml \
 [实现](../flashrsi/algorithms/ahe/__init__.py)、[manifest 协议](../flashrsi/algorithms/ahe/_manifest.py)和[提示](../flashrsi/algorithms/ahe/_prompts.py)记录上游为 `china-qijizhifeng/agentic-harness-engineering` commit `8b2a55d97590363fe50c3cc6b5e833b020a4bb4c`，经 FlashRSI `5efe9b438483710060183c6c3ecbc5062b410a58` 迁移。原迁移记录未独立核验继承的上游版本。
 
 本地取舍包括回复内 manifest 替代 checkout 内文件、核对真实 Snapshot diff、限制证据长度，以及非法编辑后继续。保守回滚/不退步变体和跨进程搜索恢复未实现，添加额外配置键不会产生这些能力。
-
-## 验证范围
-
-本地历史报告 `docs/smoke-ahe-20261023.json` 记录 MiniAgent × HotpotQA 的单训练题、单候选流程。基线和候选均通过，预测修复判为 `INEFFECTIVE`，没有证实收益，也未覆盖后续判决反馈或回滚轮次。报告还记录代码 docstring 含训练示例/任务 ID，不能据此声称泛化。
-
-报告是本地被忽略的产物，不是公开结果链接，也不覆盖所有组合。本次文档更新未增加模型调用。有效的多步验证应展示下一轮 Worker 确实读取此前判决；合法编辑和执行成功本身不代表提升。必须保留原生执行接口：运行时/输出协议错误仍可能终止搜索，而非变成可评分候选。

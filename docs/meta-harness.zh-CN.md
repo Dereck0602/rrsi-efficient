@@ -75,9 +75,3 @@ flashrsi run --config examples/quickstart.yaml \
 [实现](../flashrsi/algorithms/meta_harness/__init__.py)将 `stanford-iris-lab/meta-harness` 固定在 commit `8123ccabe2b19fa1123090b2e5f1bacc20963ce8`，参考文本分类和 Terminal-Bench 示例。[提示](../flashrsi/algorithms/meta_harness/_prompts.py)定义文件检索与编辑边界。此前接入记录关联论文编号 `2603.28052`。
 
 本地适配使用一个 seed、每次一个候选，以及一个 Benchmark 主指标，选出一个最终 Snapshot。未实现多个初始 harness、accuracy/token 多目标前沿、跨进程恢复、上游任务专用 import/smoke 检查或集群调度。提示中的泛化要求不等于独立反作弊验证。
-
-## 验证范围
-
-[行为测试](../tests/test_meta_harness.py)覆盖含降分版本的历史、目录搬移、同分、非法编辑反馈、历史副本清理、Worker 失败和直接 Python 使用。本地历史报告 `docs/smoke-metaharness-20261023.json` 将 MiniAgent × HotpotQA 记为 `flow_passed`；单个最终 test 任务 EM 为 0、F1 为 0.5。流程完成不代表性能提升。
-
-报告是本地被忽略产物，不是公开结果链接或完整验收记录。本次文档更新未增加模型调用。应分别报告实际检索动作、已测候选、资源变化、严格最佳更新和冻结 test 结果。

@@ -18,7 +18,7 @@ next:
   </div>
 </div>
 
-This quickstart runs **SkillOpt with MiniAgent** on 12 bundled SearchQA questions. It uses six questions for train, three for dev, and three for test. You need Python and two model configurations; Docker is not required. It exercises one fast update; see the [SkillOpt guide](./skillopt.md) for slow updates, selection rules, and budgets.
+This quickstart runs **SkillOpt with MiniAgent** on 12 bundled SearchQA questions. It uses six questions for train, three for dev, and three for test. You need Python, a running Docker Linux daemon, and two model configurations. Each Target task runs in a separate container with access to its configured model endpoint. It exercises one fast update; see the [SkillOpt guide](./skillopt.md) for slow updates, selection rules, and budgets.
 
 ## What FlashRSI is
 

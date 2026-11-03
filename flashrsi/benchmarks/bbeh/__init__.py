@@ -130,6 +130,7 @@ class BBEH(QABenchmark):
             task_id=task_id,
             question=question,
             ground_truth=answer,
+            env="supplied_context",
             metadata={
                 "answers": (answer,),
                 "source_split": source_split,

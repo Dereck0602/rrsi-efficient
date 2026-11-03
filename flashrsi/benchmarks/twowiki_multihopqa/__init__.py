@@ -107,6 +107,7 @@ class TwoWikiMultiHopQA(QABenchmark):
                 + f"\n\nQuestion:\n{question}"
             ),
             ground_truth=answer,
+            env="supplied_context",
             metadata={
                 "answers": (answer,),
                 "source_split": source_split,

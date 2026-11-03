@@ -101,6 +101,7 @@ class SuperGPQA(QABenchmark):
                 f"End with a line containing only the answer letter (A-{letters[-1]})."
             ),
             ground_truth=answer,
+            env="supplied_context",
             metadata={
                 "answers": (answer,),
                 "source_split": source_split,

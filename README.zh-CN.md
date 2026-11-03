@@ -76,6 +76,8 @@
 
 ### 1. 安装
 
+SearchQA 和 HotpotQA 的 `context` 模式需要 Docker CLI 与运行中的 Linux daemon，Target 容器须能访问配置的模型端点。安装步骤见[安装指南](docs/guide/installation.md)。
+
 推荐 Linux / WSL + Python 3.12。
 
 ```bash
@@ -144,7 +146,7 @@ FlashRSI 目前实现 13 种 RSI 方法：
 | [ModularRSI](https://arxiv.org/abs/2609.14857) | 分支演化 | 独立分支；集成 | 成功 / 失败轨迹 |
 | [Arbor](docs/arbor.md) | 分支演化 | 假设树与经验向上归纳 | Train 轨迹、dev 分数 |
 
-Arbor 为新接入算法；原框架图和下方实验表仍对应十二方法的已有研究。已有一次小规模 Arbor × Codex × WorkBench smoke，覆盖与限制见 [Arbor 验证说明](docs/arbor.md#真实模型验证)，该记录不代表性能收益。
+Arbor 为新接入算法；原框架图和下方实验表仍对应十二方法的已有研究。
 
 SkillOpt 的快慢更新、选优规则和参数预算见 [SkillOpt 使用说明](docs/skillopt.zh-CN.md)。
 
@@ -153,6 +155,10 @@ SkillOpt 的快慢更新、选优规则和参数预算见 [SkillOpt 使用说明
 经验积累方法见 [ACE](docs/ace.zh-CN.md) 的 playbook 策展与 offline/online 选优，以及 [Evo-Harness](docs/evo-harness.zh-CN.md) 的任务流原生技能编译。
 
 目录编辑方法见 [AHE](docs/ahe.zh-CN.md)、[ADAS](docs/adas.zh-CN.md) 和 [Meta-Harness](docs/meta-harness.zh-CN.md)，分别说明编辑基线、证据来源与最终选择规则。
+
+带能力保留约束的分支搜索见 [DarwinX](docs/darwinx.zh-CN.md)，介绍 train 重复评估、互补重组，以及准入与最终选中的区别。
+
+模块独立演化与集成见 [ModularRSI](docs/modular-rsi.zh-CN.md)，介绍原生文件映射、对比诊断、执行门禁和最终回退规则。
 
 这些方法均适配了 FlashRSI 的资源与评估接口。Evo-Harness 和 Harness 资源编辑方法需要 Agent Worker；具体条件见[选型与运行指南](docs/running-experiments.md#choose-an-algorithm-and-harness)。
 
