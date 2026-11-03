@@ -18,7 +18,24 @@ _HARBOR = {
     "spreadsheetbench2",
     "deepswe",
 }
-_CONTAINERS = _HARBOR | {"appworld", "bfcl", "swe_bench"}
+_CONTAINERS = _HARBOR | {
+    "appworld",
+    "bfcl",
+    "swe_bench",
+    "hle",
+    "livemathbench",
+    "travelplanner",
+    "officeqa_pro",
+    "harvey_lab",
+    "browsecomp",
+    "deepsearchqa",
+    "widesearch",
+    "hotpotqa",
+    "alfworld",
+    "workbench",
+    "tau2",
+    "tau3_banking",
+}
 
 
 def _supplied_context(benchmark):

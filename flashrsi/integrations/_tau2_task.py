@@ -11,17 +11,17 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from flashrsi._records import _redact, _secrets
-from flashrsi.core import Snapshot
-from flashrsi.integrations._container import _agent_class
 from flashrsi.integrations._tau2_evidence import _Evidence
-from flashrsi.integrations.tau2 import _simulate, _simulation_result
+from flashrsi.integrations._tau2_turns import request_turn
 
 
 def main(request_path: Path, response_path: Path) -> None:
     request = json.loads(request_path.read_text(encoding="utf-8"))
-    agent_type = _agent_class(request["agent_class"])
-    agent = agent_type(request["config"])
-    agent.update(Snapshot.load(Path(request["snapshot"])))
+    source, sink = sys.stdin, sys.stdout
+
+    def run_turn(prompt):
+        return request_turn(prompt, source, sink)
+
     task = SimpleNamespace(
         task_id=request["task_id"],
         env=request["domain"],
@@ -40,8 +40,10 @@ def main(request_path: Path, response_path: Path) -> None:
     tempfile.tempdir = str(native)
     try:
         with redirect_stdout(sys.stderr):
+            from flashrsi.integrations.tau2 import _simulate, _simulation_result
+
             run = _simulate(
-                agent,
+                run_turn,
                 task,
                 Path(request["domain"]),
                 request["simulator"],
@@ -49,7 +51,7 @@ def main(request_path: Path, response_path: Path) -> None:
                 evidence,
                 request.get("judge"),
             )
-        result = _simulation_result(run, evidence)
+            result = _simulation_result(run, evidence)
     except Exception as exc:
         result = {**evidence.read(), "error": str(exc) or type(exc).__name__}
     finally:

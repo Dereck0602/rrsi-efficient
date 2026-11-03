@@ -19,8 +19,6 @@ import importlib
 import json
 import os
 import re
-import signal
-import subprocess
 import sys
 import tempfile
 import threading
@@ -42,8 +40,9 @@ except ImportError as exc:
 
 from flashrsi._records import _config_record, _redact, _secrets, _trajectory_record
 from flashrsi.core import Trajectory
-from flashrsi.integrations._container import _agent_class
+from flashrsi.integrations import _model_egress, supplied_context
 from flashrsi.integrations._tau2_evidence import _Evidence
+from flashrsi.integrations._tau2_turns import run_bounded
 
 _AGENT_NAME = "flashrsi-lite"
 _DOMAIN = "banking_knowledge"
@@ -79,9 +78,8 @@ def bind(
         )
     if task_timeout is not None and (type(task_timeout) is not int or task_timeout < 1):
         raise ValueError("tau task_timeout must be a positive integer in seconds")
-    if task_timeout is not None:
-        cls = type(agent)
-        _agent_class(f"{cls.__module__}:{cls.__qualname__}")
+    supplied_context._check(agent)
+    _model_egress._origins(agent.config)
     judge_llm = dict((judge or {}).get("llm") or {})
     if judge_llm and not judge_llm.get("model_name"):
         raise ValueError(
@@ -129,9 +127,43 @@ async def _run(
         if not domain.is_dir():
             raise ValueError(f"tau task has no domain directory: {domain}")
         if task_timeout is None:
-            run = await asyncio.to_thread(
-                _simulate, agent, task, domain, simulator, config, evidence, judge
-            )
+            loop = asyncio.get_running_loop()
+            active_turn = None
+            stopped = False
+
+            async def solve_turn(prompt):
+                nonlocal active_turn
+                if stopped:
+                    raise RuntimeError("Tau simulation has stopped")
+                active_turn = asyncio.current_task()
+                try:
+                    return await supplied_context._run_prompt(
+                        agent, prompt, model_only=True
+                    )
+                finally:
+                    active_turn = None
+
+            def run_turn(prompt):
+                return asyncio.run_coroutine_threadsafe(
+                    solve_turn(prompt), loop
+                ).result()
+
+            try:
+                run = await asyncio.to_thread(
+                    _simulate,
+                    run_turn,
+                    task,
+                    domain,
+                    simulator,
+                    config,
+                    evidence,
+                    judge,
+                )
+            finally:
+                stopped = True
+                if active_turn is not None:
+                    active_turn.cancel()
+                    await asyncio.gather(active_turn, return_exceptions=True)
             result = _simulation_result(run, evidence)
         else:
             result = await _isolated_simulation(
@@ -188,17 +220,13 @@ async def _isolated_simulation(
         raise RuntimeError("tau hard task_timeout currently requires a POSIX host")
     with tempfile.TemporaryDirectory(prefix="flashrsi-tau2-") as directory:
         root = Path(directory)
-        snapshot = root / "snapshot.json"
         request = root / "request.json"
         response = root / "response.json"
         evidence = _Evidence(root / "evidence.jsonl")
-        agent.snapshot.save(snapshot)
         request.write_text(
             json.dumps(
                 {
-                    "agent_class": f"{type(agent).__module__}:{type(agent).__qualname__}",
-                    "config": config,
-                    "snapshot": str(snapshot),
+                    "config": {"max_steps": config.get("max_steps", 30)},
                     "task_id": task.task_id,
                     "domain": task.env,
                     "metadata": dict(task.metadata),
@@ -213,7 +241,11 @@ async def _isolated_simulation(
             encoding="utf-8",
         )
         request.chmod(0o600)
-        process = subprocess.Popen(
+
+        async def run_turn(prompt):
+            return await supplied_context._run_prompt(agent, prompt, model_only=True)
+
+        returncode, timed_out = await run_bounded(
             [
                 sys.executable,
                 "-m",
@@ -221,23 +253,9 @@ async def _isolated_simulation(
                 str(request),
                 str(response),
             ],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
+            run_turn,
+            task_timeout,
         )
-        deadline = time.monotonic() + task_timeout
-        timed_out = False
-        try:
-            while process.poll() is None:
-                if time.monotonic() >= deadline:
-                    timed_out = True
-                    break
-                await asyncio.sleep(min(0.1, max(0, deadline - time.monotonic())))
-        finally:
-            if process.poll() is None:
-                _stop_process_tree(process)
-            process.wait()
         if timed_out:
             return {
                 **evidence.read(),
@@ -249,47 +267,15 @@ async def _isolated_simulation(
         if not response.is_file():
             return {
                 **evidence.read(),
-                "error": f"tau2 task process exited {process.returncode} without a result",
+                "error": f"tau2 task process exited {returncode} without a result",
             }
         result = json.loads(response.read_text(encoding="utf-8"))
         return result
 
 
-def _stop_process_tree(process):
-    """Kill tau2 and its nested harness process groups before returning a score."""
-    descendants = set()
-    if Path("/proc").is_dir():
-        parents = {}
-        for entry in Path("/proc").iterdir():
-            if entry.name.isdecimal():
-                try:
-                    fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
-                    parents[int(entry.name)] = int(fields[1])
-                except (OSError, IndexError, ValueError):
-                    continue
-        frontier = {process.pid}
-        while frontier:
-            children = {pid for pid, ppid in parents.items() if ppid in frontier}
-            children -= descendants
-            descendants.update(children)
-            frontier = children
-    for pid in sorted(descendants, reverse=True):
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-
-
-def _simulate(agent, task, domain, simulator, config, evidence=None, judge=None):
-    """Run tau2's own loop on a worker thread, with our Agent inside it."""
-    loop = asyncio.new_event_loop()
-    thread = threading.Thread(target=loop.run_forever, daemon=True)
-    thread.start()
-    token = _CURRENT.set({"agent": agent, "loop": loop, "evidence": evidence})
+def _simulate(run_turn, task, domain, simulator, config, evidence=None, judge=None):
+    """Run tau2's native loop with a callback for each isolated Target turn."""
+    token = _CURRENT.set({"run_turn": run_turn, "evidence": evidence})
     try:
         domain_name = task.metadata.get("domain", _DOMAIN)
         with (
@@ -315,9 +301,6 @@ def _simulate(agent, task, domain, simulator, config, evidence=None, judge=None)
             )
     finally:
         _CURRENT.reset(token)
-        loop.call_soon_threadsafe(loop.stop)
-        thread.join()
-        loop.close()
 
 
 @contextmanager
@@ -496,10 +479,9 @@ def _simulation_result(run, evidence):
 class _AgentBridge(HalfDuplexAgent):
     """Present a FlashRSI Agent to tau2 as one of its turn-based agents."""
 
-    def __init__(self, tools, domain_policy, *, agent, loop, evidence=None):
+    def __init__(self, tools, domain_policy, *, run_turn, evidence=None):
         super().__init__(tools, domain_policy)
-        self._agent = agent
-        self._loop = loop
+        self._run_turn = run_turn
         self._evidence = evidence
         self._prompt = "\n\n".join(
             (
@@ -519,7 +501,7 @@ class _AgentBridge(HalfDuplexAgent):
         return list(message_history or ())
 
     def generate_next_message(self, message, state):
-        """tau2 drives this synchronously, so hand the turn to the Agent's loop."""
+        """Keep native turn order while the Target solves in a container."""
         state = [*state, message]
         started = time.monotonic()
         if self._evidence is not None:
@@ -530,9 +512,7 @@ class _AgentBridge(HalfDuplexAgent):
         prompt = "\n\n".join(
             [self._prompt, "## Conversation", *(_turn(item) for item in state)]
         )
-        trajectory = asyncio.run_coroutine_threadsafe(
-            self._agent.run(prompt), self._loop
-        ).result()
+        trajectory = self._run_turn(prompt)
         if self._evidence is not None:
             self._evidence.append(
                 {

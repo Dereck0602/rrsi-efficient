@@ -16,7 +16,13 @@ import yaml
 from flashrsi import algorithms
 from flashrsi._hf import selected as _hf_prepared
 from flashrsi._records import _redact, _secrets
-from flashrsi._startup import _HARBOR, _check_docker, _requires_docker, _role
+from flashrsi._startup import (
+    _HARBOR,
+    _check_docker,
+    _requires_docker,
+    _role,
+    _supplied_context,
+)
 from flashrsi.config import load_config
 
 # Every built-in benchmark has an entry, including those needing only base deps.
@@ -226,9 +232,12 @@ def _plan(config):
         prerequisites.append("Docker CLI and a running Linux daemon")
     if benchmark in _HARBOR:
         prerequisites.extend(["Python >=3.12", "Docker Compose"])
+    if benchmark == "swe_bench" or _supplied_context(config.benchmark):
+        prerequisites.append("Explicit agent.llm.base_url for model-only Target access")
     if benchmark in {"tau2", "tau3_banking"}:
         requirements.append(_TAU_REQUIREMENT)
         prerequisites.append("Python >=3.12,<3.14")
+        prerequisites.append("Explicit agent.llm.base_url for model-only Target access")
         prerequisites.append("Separate benchmark.user_simulator.llm configuration")
         if (
             benchmark == "tau2"

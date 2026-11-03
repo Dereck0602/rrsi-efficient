@@ -8,7 +8,6 @@ from dataclasses import replace
 from flashrsi._records import _redact, _secrets
 from flashrsi.benchmarks.browsecomp._official import REVISION, decrypt
 from flashrsi.integrations import _browsecomp_judge, _web_tools
-from flashrsi.integrations._web_tools import _serve as _serve
 
 
 def bind(agent, benchmark):

@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 from flashrsi._records import _config_record, _redact, _secrets
 from flashrsi.benchmarks.swe_bench_pro import _REVISION, _upstream
 from flashrsi.core import Trajectory
+from flashrsi.integrations._harbor_remote import _check_download
 from flashrsi.integrations.harbor import (
     AgentConfig,
     EnvironmentConfig,
@@ -26,6 +27,7 @@ from flashrsi.integrations.harbor import (
     TrialConfig,
     VerifierConfig,
     _archive_trial,
+    _docker_environment_import,
     _positive,
     _SnapshotAgent,
     _stage,
@@ -198,9 +200,9 @@ async def _run(agent, task, verifier_env):
             environment = {
                 "type": "docker",
                 "delete": True,
-                "import_path": "flashrsi.integrations._harbor_remote:_RemoteDockerEnvironment"
-                if options.get("remote_docker", False)
-                else None,
+                "import_path": _docker_environment_import(
+                    native, options.get("remote_docker", False)
+                ),
             }
             installer = options.get("uv_install_source", "astral")
             installers = {
@@ -234,7 +236,8 @@ async def _run(agent, task, verifier_env):
             )
             solve_result = await solve.run()
             output = solve.paths.agent_dir / "flashrsi.json"
-            if output.is_file():
+            if output.exists() or output.is_symlink():
+                _check_download(output)
                 values = json.loads(output.read_text(encoding="utf-8"))
                 values.pop("task", None)
                 trajectory = Trajectory(**values)
@@ -260,15 +263,21 @@ async def _run(agent, task, verifier_env):
                 raise RuntimeError(
                     "SWE-bench Pro solver failed before patch capture: " + error
                 )
+            if patch.exists() or patch.is_symlink():
+                _check_download(patch)
             if not patch.is_file() or patch.stat().st_size > 32 * 1024 * 1024:
                 raise ValueError(
                     "SWE-bench Pro captured patch is missing or exceeds 32 MiB"
                 )
+            data = patch.read_bytes()
+            model_patch = data.decode("utf-8")
+            if _redact(model_patch, secrets) != model_patch:
+                raise ValueError("SWE-bench Pro patch contains configured credentials")
             event.update(
                 solve_trial_id=str(solve_result.id),
-                patch_sha256=hashlib.sha256(patch.read_bytes()).hexdigest(),
-                patch_bytes=patch.stat().st_size,
-                model_patch=patch.read_text(encoding="utf-8"),
+                patch_sha256=hashlib.sha256(data).hexdigest(),
+                patch_bytes=len(data),
+                model_patch=model_patch,
                 solver_status=trajectory.status,
             )
             if solve_result.exception_info is not None:
@@ -294,19 +303,24 @@ async def _run(agent, task, verifier_env):
                     "SWE-bench Pro official regrade failed: "
                     + result.exception_info.exception_type
                 )
-            replay_record = json.loads(
-                (replay.paths.agent_dir / "replay.json").read_text(encoding="utf-8")
-            )
-            if patch.stat().st_size and replay_record.get("patch") != str(patch):
+            replay_log = replay.paths.agent_dir / "replay.json"
+            _check_download(replay_log)
+            replay_record = json.loads(replay_log.read_text(encoding="utf-8"))
+            if data and replay_record.get("patch") != str(patch):
                 raise ValueError(
                     "Official SWE-bench Pro replay did not find the captured patch"
                 )
-            event["patch_apply_exit"] = replay_record.get("apply_rc")
+            apply_rc = replay_record.get("apply_rc")
+            event["patch_apply_exit"] = apply_rc
             rewards = result.verifier_result.rewards if result.verifier_result else None
             reward = rewards.get("reward") if isinstance(rewards, dict) else None
             if type(reward) not in (int, float) or reward not in (0, 1):
                 raise ValueError(
                     "SWE-bench Pro official verifier must return reward 0 or 1"
+                )
+            if reward == 1 and (not data or type(apply_rc) is not int or apply_rc != 0):
+                raise ValueError(
+                    "SWE-bench Pro reward requires a successfully applied patch"
                 )
             event.update(
                 regrade_trial_id=str(result.id),

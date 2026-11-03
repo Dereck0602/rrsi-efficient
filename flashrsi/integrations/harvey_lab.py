@@ -10,9 +10,10 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 from collections.abc import Mapping
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from tempfile import TemporaryDirectory
 from types import MappingProxyType
 from uuid import uuid4
@@ -20,24 +21,18 @@ from uuid import uuid4
 from flashrsi._records import _redact, _secrets
 from flashrsi._startup import _url
 from flashrsi.agents.miniagent import _stop
+from flashrsi.benchmarks._archive import _is_safe
 from flashrsi.benchmarks.harvey_lab import JUDGES, REVISION, _files
-from flashrsi.integrations import _harvey_lab_grade
+from flashrsi.integrations import _harvey_lab_grade, supplied_context
 
 
 def bind(agent, benchmark):
+    supplied_context._check(agent)
     _harvey_lab_grade.check()
     # Import once at startup so missing document/provider dependencies fail
     # before any target calls, not after an expensive legal assignment.
     from lab_core.evaluation import run_eval  # noqa: F401
 
-    if (
-        agent.name == "miniagent"
-        and os.name != "posix"
-        and not agent.config.get("source_dir")
-    ):
-        raise ValueError(
-            "Harvey LAB with MiniAgent's bundled shell requires POSIX; use Linux/WSL or a compatible custom source_dir"
-        )
     if (
         agent.name == "claude_code"
         and agent.config.get("permission_mode") != "bypassPermissions"
@@ -118,15 +113,28 @@ def bind(agent, benchmark):
     )
 
     async def run(target, task):
-        row, documents = benchmark._resources(task)
+        _, documents = benchmark._resources(task)
         with TemporaryDirectory(prefix="flashrsi-harvey-workspace-") as temporary:
             workspace = Path(temporary)
             shutil.copytree(documents, workspace / "documents")
             (workspace / "output").mkdir()
-            result = await target.run(
+            collected = workspace / "collected"
+            collection_error = None
+
+            async def collect(docker, name, grace):
+                nonlocal collection_error
+                try:
+                    await docker("stop", "--time", "1", name, timeout=grace)
+                    await _copy_output(name, collected, max_bytes, grace)
+                except Exception as exc:
+                    collection_error = type(exc).__name__
+
+            result = await supplied_context._run_prompt(
+                target,
                 task.question
                 + "\n\nWorkspace: ./documents contains the supplied matter documents. Write all deliverable files to ./output. Use your native file and shell tools; your final text is not a deliverable file.",
-                working_dir=workspace,
+                workspace=workspace,
+                collect=collect,
             )
             result = replace(
                 result,
@@ -136,6 +144,12 @@ def bind(agent, benchmark):
                     if m.get("type") not in {"HarveyLABVerifier", "HarveyLABArtifacts"}
                 ),
             )
+            if collection_error:
+                result = replace(
+                    result,
+                    status="error",
+                    error_message=f"Harvey LAB output collection failed ({collection_error})",
+                )
             if result.status == "finished":
                 try:
                     with TemporaryDirectory(prefix="flashrsi-harvey-grade-") as trusted:
@@ -150,7 +164,7 @@ def bind(agent, benchmark):
                         )
                         run_dir = root / "results" / "run"
                         output = run_dir / "output"
-                        artifacts = _collect(workspace / "output", output, max_bytes)
+                        artifacts = _collect(collected, output, max_bytes)
                         destination = None
                         if benchmark._artifacts_dir is not None:
                             destination = benchmark._artifacts_dir / uuid4().hex
@@ -215,6 +229,81 @@ def bind(agent, benchmark):
         )
 
     agent._env_runner = run
+
+
+async def _copy_output(name, destination, max_bytes, timeout):
+    # Docker sends a tar stream from the stopped container. Bound the transfer
+    # before parsing it and never let Docker extract candidate files on the host.
+    archive_path = destination.with_suffix(".tar")
+    limit = max_bytes + 16 * 1024 * 1024  # headers, padding and directories
+    process = await asyncio.create_subprocess_exec(
+        "docker",
+        "cp",
+        f"{name}:/task/output",
+        "-",
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    try:
+        async with asyncio.timeout(timeout):
+            with archive_path.open("xb") as stream:
+                while chunk := await process.stdout.read(64 * 1024):
+                    limit -= len(chunk)
+                    if limit < 0:
+                        raise ValueError(
+                            "Harvey LAB output archive exceeds transfer limit"
+                        )
+                    stream.write(chunk)
+            if await process.wait():
+                raise RuntimeError("Cannot copy Harvey LAB output from container")
+    finally:
+        if process.returncode is None:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+        await process.communicate()
+    _unpack_output(archive_path, destination, max_bytes)
+
+
+def _unpack_output(archive_path, destination, max_bytes):
+    destination.mkdir()
+    seen = set()
+    total = 0
+    with tarfile.open(archive_path, mode="r:") as archive:
+        for member in archive:
+            name = member.name.rstrip("/") if member.isdir() else member.name
+            parts = name.split("/")
+            if (
+                not _is_safe(name)
+                or parts[0] != "output"
+                or any(
+                    part.endswith((".", " "))
+                    or PureWindowsPath(part).is_reserved()
+                    or any(c in '<>"|?*' or ord(c) < 32 for c in part)
+                    for part in parts
+                )
+                or name.casefold() in seen
+                or len(seen) >= 10_000
+                or member.size < 0
+                or not (member.isdir() or member.isfile() and not member.issparse())
+                or (len(parts) == 1 and not member.isdir())
+            ):
+                raise ValueError("Harvey LAB output contains an unsafe archive entry")
+            seen.add(name.casefold())
+            path = destination.joinpath(*parts[1:])
+            if member.isdir():
+                path.mkdir(parents=True, exist_ok=True)
+                continue
+            total += member.size
+            if total > max_bytes:
+                raise ValueError("Harvey LAB output exceeds max_artifact_bytes")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with archive.extractfile(member) as source, path.open("xb") as stream:
+                shutil.copyfileobj(source, stream)
+    if "output" not in seen:
+        raise ValueError("Harvey LAB output archive is missing its root directory")
 
 
 def _collect(source, destination, max_bytes):

@@ -1,6 +1,8 @@
 # Copy to a sibling *.local.yaml so relative paths keep their meaning.
 # Fill Target/Worker model settings and every extra role/service below.
-# Python 3.12/3.13 and independent native Anthropic/OpenAI judges; launcher prepares Pandoc.
+# Python 3.12/3.13, Docker and independent native Anthropic/OpenAI judges.
+# The launcher prepares host Pandoc for the evaluator. If the Target needs
+# document utilities, select a container_image that provides them.
 # 1/1/1 is a custom experiment partition, not an official benchmark result.
 run:
   output_dir: ../runs

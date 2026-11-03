@@ -33,9 +33,11 @@ confidence: The extracted confidence score between 0|\%| and 100|\%| from [respo
 
 async def judge(question, answer, prediction, config):
     from openai import AsyncOpenAI
-    from pydantic import BaseModel
+    from pydantic import BaseModel, ConfigDict
 
     class ExtractedAnswer(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
         extracted_final_answer: str
         reasoning: str
         correct: Literal["yes", "no"]
@@ -47,27 +49,45 @@ async def judge(question, answer, prediction, config):
     api_key = llm.pop("api_key")
     base_url = llm.pop("base_url", None) or "https://api.openai.com/v1"
     llm.setdefault("max_completion_tokens", 4096)
+    response_format = llm.pop("response_format", None)
+    if response_format not in (None, {"type": "json_object"}):
+        raise ValueError("HLE judge response_format must be json_object when set")
+    json_mode = response_format is not None
+    prompt = JUDGE_PROMPT.format(
+        question=question, correct_answer=answer, response=prediction
+    )
+    if json_mode:
+        prompt += (
+            "\nReturn one JSON object with exactly these fields: "
+            "extracted_final_answer, reasoning, correct, confidence, and strict. "
+            "Use an integer for confidence and the JSON boolean true for strict."
+        )
+    messages = [{"role": "user", "content": prompt}]
     async with AsyncOpenAI(
         api_key=api_key,
         base_url=base_url,
         timeout=config["timeout"],
         max_retries=config.get("max_retries", 1),
     ) as client:
-        response = await client.beta.chat.completions.parse(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": JUDGE_PROMPT.format(
-                        question=question, correct_answer=answer, response=prediction
-                    ),
-                }
-            ],
-            response_format=ExtractedAnswer,
-            **llm,
-        )
+        if json_mode:
+            response = await client.chat.completions.create(
+                model=model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                **llm,
+            )
+        else:
+            response = await client.beta.chat.completions.parse(
+                model=model, messages=messages, response_format=ExtractedAnswer, **llm
+            )
     usage = response.usage.model_dump(mode="json") if response.usage else {}
     if not response.choices or response.choices[0].finish_reason != "stop":
         return None, usage
-    parsed = response.choices[0].message.parsed
+    message = response.choices[0].message
+    if json_mode:
+        if not message.content:
+            return None, usage
+        parsed = ExtractedAnswer.model_validate_json(message.content, strict=True)
+    else:
+        parsed = message.parsed
     return (parsed.model_dump() if parsed is not None else None), usage

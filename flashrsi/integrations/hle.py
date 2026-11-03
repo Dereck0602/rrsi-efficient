@@ -1,4 +1,4 @@
-"""No-Docker HLE execution followed by the fixed official structured judge."""
+"""Isolated HLE execution followed by the fixed official structured judge."""
 
 import copy
 import importlib.util
@@ -6,10 +6,11 @@ import math
 from dataclasses import replace
 
 from flashrsi._records import _redact, _secrets
-from flashrsi.integrations import _hle_judge
+from flashrsi.integrations import _hle_judge, supplied_context
 
 
 def bind(agent, benchmark):
+    supplied_context._check(agent)
     if importlib.util.find_spec("openai") is None:
         raise ValueError("Install flashrsi-lite[all] for HLE judging")
     config = copy.deepcopy(dict(benchmark.config.get("judge", {})))
@@ -27,7 +28,7 @@ def bind(agent, benchmark):
         if benchmark._tasks_by_id.get(task.task_id) != task:
             raise ValueError("HLE requires a loaded benchmark Task")
         row = benchmark._rows_by_id[task.task_id]
-        result = await target.run(task.question)
+        result = await supplied_context._run_prompt(target, task.question)
         result = replace(
             result,
             messages=tuple(

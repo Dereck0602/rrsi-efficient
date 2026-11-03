@@ -38,6 +38,8 @@ commit `7131e4375048a0e408a8fb404b5f499d726b695b`，读取其 `tasks/`。
 `version` 必须是字符串；现有默认值仍为 `"2.0"`，不改旧实验的来源或解释。
 本地 `data_path` 应指向 `tasks/` 或一个原生任务目录。
 
+SWE-bench Verified 的解题容器在依赖准备完毕后只允许访问显式配置的模型来源。原生测试在新容器执行。SWE-bench Pro V2 沿用原生解题网络规则和独立补丁重放；单服务任务通过复制回传日志和补丁，拒绝链接或含凭据的补丁，正分必须对应成功应用的补丁。
+
 ## SpreadsheetBench 2
 
 固定[官方代码](https://github.com/RUCKBReasoning/SpreadsheetBench-2/tree/a7bdc2d358e052d35a94768e1f487c0d9e9c0011)

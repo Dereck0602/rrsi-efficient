@@ -3,7 +3,7 @@
 接入 [olly-styles/WorkBench](https://github.com/olly-styles/WorkBench)，固定 commit
 `49c7dfd00c03d384ec59ea57374f50b766aa5613`，使用 Revisited 的 ground truth v2。
 上游的五类模拟工作系统包含邮件、日历、分析、项目管理和 CRM，另提供公司通讯录工具。
-默认加载全部 690 道原题和全部原生工具，不需要 Docker、搜索服务或 LLM Judge。
+默认加载全部 690 道原题和全部原生工具。Target 需要 Docker，评分使用原生规则。
 
 复制 [配置示例](../examples/workbench_opro.yaml) 为 `experiment.local.yaml`，分别填写
 Target 和 Worker 的模型/API。Python 使用 3.12 或更新版本，并安装 Git。
@@ -38,5 +38,5 @@ ModularRSI 所需的独立演化数据没有在本接入中提供，不能把同
 轨迹末尾保存 `WorkBenchVerifier`，记录 task/data 校验和、源码版本、v2 标记、执行操作及原生分数。
 工具错误保留；评分器错误不会被当成正常的答错或通过。
 
-这是本地工具工作区接入，不提供针对恶意候选代码的操作系统安全隔离。
+Target 在每题独立的 Docker 容器内通过私有通道调用原生工具。数据库、参考操作和评分器留在宿主机。
 数据库线程隔离、原生写操作/副作用评分和公开配置的离线检查，不等于算法 × Target 的真实模型 smoke。

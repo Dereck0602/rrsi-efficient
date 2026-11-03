@@ -16,7 +16,11 @@ AppWorld 应用 API、ALFWorld 动作服务、网页检索后端、工作簿和�
 
 SearchQA、MuSiQue、TriviaQA、NQ、2WikiMultiHopQA、MATH、AIME、BBEH、SuperGPQA，以及 HotpotQA `context` 模式共用 `supplied_context` 执行器。CLI 的演化和冻结 Snapshot 评估都会自动绑定它。启动检查要求 Docker CLI 和 Linux daemon；Target 还必须声明容器依赖并支持容器执行。
 
-每题使用独立容器，只暂存框架运行代码、选中的 harness Snapshot、Target 配置和公开题目。原始标注数据、其他实验目录、宿主机工作目录及 Docker socket 不挂载到容器。评分仍在宿主机完成，任务 ID、划分、评分协议和选优规则保持原样。容器需要访问模型端点；这一步没有限制任意网络访问，也没有隔离带工具的 Worker。
+每题使用独立容器，只暂存框架运行代码、选中的 harness Snapshot、Target 配置和公开题目。原始标注数据、其他实验目录、宿主机工作目录及 Docker socket 不挂载到容器。评分仍在宿主机完成，任务 ID、划分、评分协议和选优规则保持原样。依赖准备完成后，解题容器只允许访问 `agent.llm.base_url` 及可选 `side_base_url` 指定的模型来源，外部搜索、网页访问与 DNS 被拦截。该规则适用于本节列出的给定材料或只给题目的配置。带工具的 Worker 需要独立隔离。
+
+BrowseComp、DeepSearchQA、WideSearch 和 HotpotQA fullwiki 也在独立容器内解题。容器内的搜索/读网页客户端通过任务私有 Unix socket 和附着的 Docker exec 流发送请求，宿主机无需开放监听端口。检索供应商凭据和 Judge 留在宿主机。HotpotQA fullwiki 的检索只返回文章标题、句子和原始句子 ID，官方证据评分仍在宿主机完成。ALFWorld 与 WorkBench 使用同一私有通道提交动作或工具调用，原生游戏、数据库和评分继续由宿主侧的每题子进程管理。
+
+纯文本 HLE、LiveMathBench 和 TravelPlanner 复用同一容器执行路径，并保留各自的接入层。每次解题只传入公开题目，LiveMathBench 每次采样单独启动容器。HLE 与 LiveMathBench 的 Judge、TravelPlanner 的格式转换和官方约束评分均留在宿主机。OfficeQA-Pro 的每题容器另外接收公开语料副本，参考答案和 oracle 文档标识留在宿主机评分侧。
 
 直接使用 Python API 时，在加载任务并调用 `agent.rollout(...)` 前绑定同一执行器：
 
@@ -41,7 +45,7 @@ graded = benchmark.grade(trajectories)
 | `appworld` | 应用数据库、世界服务、AppWorld 客户端和 API 使用说明 | 独立原生评分容器 |
 | `bfcl` | 原生多轮会话、函数定义、调用客户端和回合协议 | 独立官方回放评分 |
 | `workbench` | 每题数据库副本、原生工具服务和调用客户端 | 宿主端原生评分 |
-| `harvey_lab` | 事项文档、输出目录及交付协议 | 独立官方 Judge 与产物收集 |
+| `harvey_lab` | 独立容器内的公开事项文档、输出目录及交付协议 | 容器停止后只回收 `output/` 内受限的普通文件。独立官方 Judge 留在宿主机 |
 | `officeqa_pro` | 公共文档语料副本和语料路径 | 宿主端官方答案评分 |
 | `travelplanner` | sole-planning 原生题目及其中的参考信息 | 独立格式转换模型及原生约束评分；评分数据库不交给 solver |
 | `tau2` | 原生领域数据库、policy、领域工具、用户模拟器与会话协议 | 原生模拟器评分 |
@@ -88,7 +92,7 @@ graded = benchmark.grade(trajectories)
    这属于待测策略的迁移表现。若修改策略或替换组件，必须作为新的版本单独报告。
 
 这些约束覆盖演化运行和独立迁移评估，算法仍只通过 Agent 与 Benchmark 的公共接口工作。
-τ 的原生模拟器负责外部用户/环境交互，每个 Agent 回合仍调用所选 harness 自己的执行入口；
+τ 的原生模拟器负责外部用户/环境交互。每个 Agent 回合在独立容器内调用所选 harness；依赖安装后容器只通过专用代理访问显式配置的模型来源，官方工具仍在宿主侧运行。启用整题硬超时时，父进程仍拥有 Target 容器的生命周期，能在取消当前回合时清理容器；
 这里没有声称把模拟器的交互协议也变成可演化的 MiniAgent 代码。
 
 ## 验证范围
@@ -101,5 +105,6 @@ Snapshot 和 Target 配置不被环境替换。外部服务由测试探针替代
 SpreadsheetBench2 的实际任务构建及 MiniAgent 原生子进程，检查同一个演化 loop 和 skill 继续生效；
 Docker 和模型服务仍是测试替身。
 
-`tests/test_tau_task_harness.py` 检查 τ 的独立超时进程入口恢复三个内置 Target Agent 的选定版本。
+`tests/test_tau_task_harness.py` 检查 τ 的独立超时进程只把回合提示发送给父进程，
+由父进程运行已选定的 harness，并在整题超时后取消和清理 Target 容器。
 这些均为离线契约验证，不能替代数据下载、真实服务连接、Docker 运行、官方评分或实际迁移得分实验。

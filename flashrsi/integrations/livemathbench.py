@@ -8,14 +8,13 @@ from dataclasses import replace
 from flashrsi._records import _redact, _secrets
 from flashrsi.benchmarks.livemathbench import REVISION
 from flashrsi.core import Trajectory
-from flashrsi.integrations import _livemathbench_judge
+from flashrsi.integrations import _livemathbench_judge, supplied_context
 
 
 def bind(agent, benchmark):
+    supplied_context._check(agent)
     if importlib.util.find_spec("openai") is None:
-        raise ValueError(
-            "Install flashrsi-lite[all] for LiveMathBench judging"
-        )
+        raise ValueError("Install flashrsi-lite[all] for LiveMathBench judging")
     judge = copy.deepcopy(dict(benchmark.config.get("judge", {})))
     llm = judge.setdefault("llm", {})
     llm.setdefault("model_name", "Qwen/Qwen2.5-72B-Instruct")
@@ -44,7 +43,7 @@ def bind(agent, benchmark):
         samples, labels, calls, judge_usage = [], [], [], []
         error = None
         for index in range(benchmark._n):
-            result = await target.run(task.question)
+            result = await supplied_context._run_prompt(target, task.question)
             correct = 0
             # A failed target sample counts as incorrect without shrinking n.
             # A judge infrastructure failure invalidates the whole task instead.
