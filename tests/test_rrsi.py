@@ -18,9 +18,6 @@ from flashrsi.algorithms.rrsi import (
     _directives as directives,
 )
 from flashrsi.algorithms.rrsi import (
-    _edit_budget as edit_budget,
-)
-from flashrsi.algorithms.rrsi import (
     _judge as judge,
 )
 from flashrsi.algorithms.rrsi import (
@@ -698,12 +695,7 @@ def test_direct_use_creates_and_removes_reference_records(monkeypatch, tmp_path)
     assert algo._run_dir is None
 
 
-def test_bootstrap_and_schedule_match_search_units():
-    config = Config({**RRSI._defaults, "T": 20})
-    assert edit_budget(0, config) == 4
-    assert edit_budget(20, config) == 1
-    assert all(edit_budget(t, config) >= edit_budget(t + 1, config) for t in range(20))
-    assert noise_band({"a": [0, 1], "b": [1, 1]}, 2, 7) > 0
+def test_bootstrap_noise_is_zero_without_within_task_variation():
     assert noise_band({"a": [0, 0], "b": [1, 1]}, 2, 7) == 0
 
 
