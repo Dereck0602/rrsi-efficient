@@ -153,6 +153,7 @@ class TriviaQA(QABenchmark):
                 f"Context:\n{context}\n\nQuestion:\n{question}"
             ),
             ground_truth=value,
+            env="supplied_context",
             metadata={
                 "answers": tuple(references),
                 "source_split": source_split,

@@ -1,7 +1,7 @@
 # AIME 接入
 
 AIME 适配器复用 `QABenchmark`、数据划分、Agent 文本执行和 runner。
-无需 Docker、GPU、Judge 或额外 Python 依赖。算法与 Target Agent 的组件要求仍由
+Target 每题在独立 Linux 容器中执行，需要 Docker CLI 与运行中的 Linux daemon，容器须能访问模型端点。无需 GPU 或 Judge。算法与 Target Agent 的组件要求仍由
 初始化检查负责。
 
 | 配置 | 内容 | 固定数据来源 | 评分 |

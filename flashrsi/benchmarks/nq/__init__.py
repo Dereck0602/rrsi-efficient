@@ -161,6 +161,7 @@ class NQ(QABenchmark):
                 f"Context:\n{context}\n\nQuestion:\n{question}"
             ),
             ground_truth=references[0],
+            env="supplied_context",
             metadata={"answers": tuple(references), "source_split": source_split},
         )
 

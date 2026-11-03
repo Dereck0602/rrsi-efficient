@@ -208,6 +208,7 @@ class MuSiQue(QABenchmark):
                 f"Context:\n{context}\n\nQuestion:\n{question}"
             ),
             ground_truth=answer,
+            env="supplied_context",
             metadata={
                 "answers": (answer, *aliases),
                 "source_split": source_split,

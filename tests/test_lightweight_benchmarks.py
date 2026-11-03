@@ -162,7 +162,7 @@ def test_bbeh_explicit_duplicate_exclusion_removes_whole_groups(tmp_path, caplog
 def test_no_label_or_explanation_in_agent_prompt(cls, row):
     task = cls._task_from_row(row(), "test")
     assert "SECRET" not in task.question
-    assert task.env is None
+    assert task.env == "supplied_context"
 
     class Recorder(Agent):
         name = "prompt-recorder"
@@ -172,8 +172,8 @@ def test_no_label_or_explanation_in_agent_prompt(cls, row):
             assert "SECRET" not in prompt
             return Trajectory(output="A")
 
-    trajectories = asyncio.run(Recorder().rollout((task,)))
-    assert trajectories[0].task == task
+    with pytest.raises(NotImplementedError, match="bind an execution integration"):
+        asyncio.run(Recorder().rollout((task,)))
 
 
 @pytest.mark.parametrize("field,value", [("task", ""), ("input", None), ("target", 2)])
@@ -262,7 +262,7 @@ def test_registration_planning_and_unsupported_protocols(cls, row):
     )
     plan = _launch._plan(cfg)
     assert plan["extras"] == ["all"]
-    assert plan["prerequisites"] == []
+    assert plan["prerequisites"] == ["Docker CLI and a running Linux daemon"]
     with pytest.raises(ValueError, match="scoring"):
         cls({"scoring": "legacy"})
     with pytest.raises(ValueError, match="mode"):

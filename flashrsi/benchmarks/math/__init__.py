@@ -182,6 +182,7 @@ class MATH(NativeBenchmark):
                 split,
                 task_id,
                 problem + "\n\nGive your final answer in \\boxed{...}.",
+                env="supplied_context",
                 subject=row.get("subject", row.get("type")),
                 level=row.get("level"),
                 question_checksum=hashlib.sha256(

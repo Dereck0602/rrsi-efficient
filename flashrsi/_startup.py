@@ -22,7 +22,17 @@ _CONTAINERS = _HARBOR | {"appworld", "bfcl", "swe_bench"}
 
 
 def _supplied_context(benchmark):
-    return benchmark.name == "searchqa" or (
+    return benchmark.name in {
+        "searchqa",
+        "musique",
+        "triviaqa",
+        "nq",
+        "twowiki_multihopqa",
+        "math",
+        "aime",
+        "bbeh",
+        "supergpqa",
+    } or (
         benchmark.name == "hotpotqa" and benchmark.get("mode", "context") == "context"
     )
 

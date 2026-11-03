@@ -9,7 +9,7 @@
 注册、离线接口测试、真实 smoke 是不同状态。Smoke 结果和验证报告仅本地保存，不随源码发布；Codex 此次合入不表示 30 项均已用它完成真实运行。完整入口说明见[一键实验指南](experiment-launcher.zh-CN.md)。
 
 所有接入遵循同一条边界：演化的 harness 由 Snapshot 固定，目标任务的数据、环境和领域工具由 benchmark 接入层提供。
-SearchQA 和 HotpotQA 的 `context` 模式需要 Docker CLI 和 Linux daemon。每题的 Target 在独立容器内执行，宿主机保留标签和评分记录。容器需要能访问配置的模型端点。
+SearchQA、MuSiQue、TriviaQA、NQ、2WikiMultiHopQA、MATH、AIME、BBEH、SuperGPQA，以及 HotpotQA 的 `context` 模式需要 Docker CLI 和 Linux daemon。每题的 Target 在独立容器内执行，宿主机保留标签和评分记录。容器需要能访问配置的模型端点。边界及 Python API 用法见下方链接。
 逐项分工与验证范围见 [Harness 与任务环境边界](benchmark-harness-boundary.md)；迁移评估入口见 [Snapshot 评估](snapshot-evaluation.md)。
 
 | 领域 | Registry ID | 完整示例 | 额外准备 / 接入边界 |

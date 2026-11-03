@@ -52,7 +52,7 @@ docker compose version
 docker run --rm hello-world
 ```
 
-SearchQA and HotpotQA in `context` mode require Docker to run each Target task in a separate Linux container. The container must reach the configured model endpoint. Harbor tasks require Docker and Compose. SWE-bench Verified, AppWorld, and BFCL have their own container integrations. The [benchmark index](../integrations/benchmarks.md) identifies which environment to prepare.
+SearchQA, MuSiQue, TriviaQA, NQ, 2WikiMultiHopQA, MATH, AIME, BBEH, SuperGPQA, and HotpotQA in `context` mode require Docker to run each Target task in a separate Linux container. The container must reach the configured model endpoint. Harbor tasks require Docker and Compose. SWE-bench Verified, AppWorld, and BFCL have their own container integrations. The [benchmark index](../integrations/benchmarks.md) identifies which environment to prepare.
 
 ## Check a first configuration
 

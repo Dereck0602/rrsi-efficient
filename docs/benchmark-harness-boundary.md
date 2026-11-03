@@ -4,13 +4,31 @@
 Snapshot 固定这些资源。迁移时用同一个版本执行目标 benchmark，不把目标任务的环境配置提交成新的 harness 版本。
 
 Benchmark 及其接入层负责准备本任务所需的数据、工作目录、服务、领域工具、工具说明、输出协议和评分器。
-纯文本 benchmark 可以只提供题目与公开上下文，不必人为增加工具或 Docker。
+纯文本 benchmark 可以只提供题目与公开上下文。为隔离宿主机上的标签、数据缓存和历史实验，已接入的纯文本任务通过 Docker 执行 Target，保留原生 harness 工具能力。
 Judge、User Simulator、Postprocess 的配置和凭据属于 benchmark，不能从演化 Worker 继承。
 
 “工具”需要按职责区分：MiniAgent 的通用 shell 调度、Claude Code/Codex 的原生工具调用机制属于 harness；
 AppWorld 应用 API、ALFWorld 动作服务、网页检索后端、工作簿和代码仓库属于任务环境。
 领域工具通过当前接入使用的 shell/CLI、文件或对话协议提供，不要求每个 benchmark 都改用 MCP。
 任务专用 MCP 若有需要，也应通过接入层和 harness 的原生运行配置连接；目前没有注册项依赖一个统一的 MCP 注入接口。
+
+## 纯文本任务的执行隔离
+
+SearchQA、MuSiQue、TriviaQA、NQ、2WikiMultiHopQA、MATH、AIME、BBEH、SuperGPQA，以及 HotpotQA `context` 模式共用 `supplied_context` 执行器。CLI 的演化和冻结 Snapshot 评估都会自动绑定它。启动检查要求 Docker CLI 和 Linux daemon；Target 还必须声明容器依赖并支持容器执行。
+
+每题使用独立容器，只暂存框架运行代码、选中的 harness Snapshot、Target 配置和公开题目。原始标注数据、其他实验目录、宿主机工作目录及 Docker socket 不挂载到容器。评分仍在宿主机完成，任务 ID、划分、评分协议和选优规则保持原样。容器需要访问模型端点；这一步没有限制任意网络访问，也没有隔离带工具的 Worker。
+
+直接使用 Python API 时，在加载任务并调用 `agent.rollout(...)` 前绑定同一执行器：
+
+```python
+from flashrsi.integrations.supplied_context import bind
+
+bind(agent)
+trajectories = await agent.rollout(benchmark.test)
+graded = benchmark.grade(trajectories)
+```
+
+未绑定的 `rollout` 会报错，不会自动在宿主机解题。其他服务型 benchmark 仍使用各自接入层，不能直接替换为这个只接收题目的执行器。
 
 ## 当前 30 个注册项的分工
 
