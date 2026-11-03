@@ -16,7 +16,7 @@ import yaml
 from flashrsi import algorithms
 from flashrsi._hf import selected as _hf_prepared
 from flashrsi._records import _redact, _secrets
-from flashrsi._startup import _CONTAINERS, _HARBOR, _check_docker, _role
+from flashrsi._startup import _HARBOR, _check_docker, _requires_docker, _role
 from flashrsi.config import load_config
 
 # Every built-in benchmark has an entry, including those needing only base deps.
@@ -164,7 +164,15 @@ def _plan(config):
         raise ValueError(
             "Unsupported benchmark; choose: " + ", ".join(_BENCHMARK_EXTRAS)
         )
-    if target not in {"miniagent", "claude_code", "codex", "pi", "hermes", "openclaw", "opencode"} or (
+    if target not in {
+        "miniagent",
+        "claude_code",
+        "codex",
+        "pi",
+        "hermes",
+        "openclaw",
+        "opencode",
+    } or (
         not evaluating
         and (
             worker not in _AGENT_EXTRAS
@@ -214,7 +222,7 @@ def _plan(config):
         "harvey_lab",
     }:
         prerequisites.append("Git for upstream installation/data preparation")
-    if benchmark in _CONTAINERS:
+    if _requires_docker(config.benchmark):
         prerequisites.append("Docker CLI and a running Linux daemon")
     if benchmark in _HARBOR:
         prerequisites.extend(["Python >=3.12", "Docker Compose"])
@@ -333,7 +341,7 @@ def _validate_host(config):
         in {"swe_bench", "tau2", "tau3_banking", "workbench", "spreadsheetbench2"}
     ) and shutil.which("git") is None:
         raise ValueError("Install Git and put it on PATH for the selected benchmark")
-    if name in _CONTAINERS and shutil.which("docker") is None:
+    if _requires_docker(config.benchmark) and shutil.which("docker") is None:
         raise ValueError(
             "Install Docker and start a Linux daemon for the selected benchmark"
         )
@@ -356,7 +364,7 @@ async def _resources(config, cache):
 
     name = config.benchmark.name
     prepared = _hf_prepared(config.benchmark)
-    if name in _CONTAINERS:
+    if _requires_docker(config.benchmark):
         await _check_docker(name, config.benchmark, images=False)
     if name in {"appworld", "bfcl"}:
         from importlib import import_module

@@ -12,7 +12,11 @@ export default defineConfig({
   // Keep .html URLs: GitHub Pages can serve every page directly without rewrites.
   cleanUrls: false,
   rewrites: { 'README.md': 'overview.md' },
-  srcExclude: ['**/node_modules/**'],
+  // Match the local reports excluded from source control.
+  srcExclude: [
+    '**/node_modules/**', 'smoke*', 'validation-*', 'core-source-audit*',
+    'main-sync-*', 'git-integration-*',
+  ],
   head: [
     ['link', { rel: 'icon', type: 'image/svg+xml', href: `${base}favicon.svg` }],
     ['meta', { name: 'theme-color', content: '#f7f5f2' }],
@@ -54,6 +58,8 @@ export default defineConfig({
         item('AHE', '/ahe'),
         item('ADAS', '/adas'),
         item('Meta-Harness', '/meta-harness'),
+        item('DarwinX', '/darwinx'),
+        item('ModularRSI', '/modular-rsi'),
         item('Benchmarks', '/integrations/benchmarks'),
         item('Datasets & splits', '/integrations/datasets'),
         item('Harnesses', '/integrations/harnesses'),

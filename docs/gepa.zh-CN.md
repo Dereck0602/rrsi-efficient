@@ -73,7 +73,3 @@ Worker 调用、原生模型/工具轮次和最终 test 不计入这个任务评
 [搜索模块](../flashrsi/algorithms/gepa/__init__.py)将采样参考 `gepa-ai/gepa-artifact` 固定在 `cbefbc1aa0f43dd39874ec4bf42211365dbda42e`。[种群模块](../flashrsi/algorithms/gepa/_population.py)将 `gepa-ai/gepa` 固定在 `0632cdb5dcc052e690eab439e1b4a7e3e9cfe407`。
 
 本地适配重写一个 harness 指令文件，不包含复合系统的模块轮换，也未实现 system-aware merge。反思使用 FlashRSI 的训练反馈和轨迹；[提示模板](../flashrsi/algorithms/gepa/_prompts.py)定义回复格式。
-
-## 验证范围
-
-示例是有预算限制的运行方法，不是新增实测结果。停在完美 minibatch 的 smoke 不覆盖指令重写、候选筛选或完整 dev 准入。报告应说明实际发生的决策、`metric_calls` 和所选 Snapshot。若声称覆盖两种接受规则或父版本策略，需要分别验证。

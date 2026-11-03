@@ -21,6 +21,16 @@ _HARBOR = {
 _CONTAINERS = _HARBOR | {"appworld", "bfcl", "swe_bench"}
 
 
+def _supplied_context(benchmark):
+    return benchmark.name == "searchqa" or (
+        benchmark.name == "hotpotqa" and benchmark.get("mode", "context") == "context"
+    )
+
+
+def _requires_docker(benchmark):
+    return benchmark.name in _CONTAINERS or _supplied_context(benchmark)
+
+
 async def _preflight(config):
     benchmark = config.benchmark
     name = benchmark.name
@@ -68,7 +78,7 @@ async def _preflight(config):
                 ) from None
         if benchmark.get("task_timeout") is not None and os.name != "posix":
             raise ValueError("tau hard task_timeout requires a POSIX host")
-    if name in _CONTAINERS:
+    if _requires_docker(benchmark):
         await _check_docker(name, benchmark)
 
     for label, section in (

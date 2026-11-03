@@ -70,9 +70,3 @@ Worker 失败向外传播。候选运行错误由 Target 和 Benchmark 的契约
 [搜索实现](../flashrsi/algorithms/adas/__init__.py)和[提示](../flashrsi/algorithms/adas/_prompts.py)引用 `ShengranHu/ADAS`，但本仓库**仍未固定上游 commit**。这是来源尚待补齐的机制移植，不是已核验到具体版本的复现。
 
 原始固定框架中的 `forward()` 设计在这里由原生 harness 文件表达。档案从一个 Target Snapshot 起步，不使用多个预定义 Agent 架构。反思在同一 checkout 编辑，说明通过回复传递，组件规则限制设计，最终按 FlashRSI dev 分数选择。未实现独立 Agent DSL、多种子架构库或跨进程搜索恢复。
-
-## 验证范围
-
-[行为测试](../tests/test_adas.py)覆盖降分设计留档、最佳父版本选择、同分处理、同目录反思和非法编辑。本地历史报告 `docs/smoke-adas-20261023.json` 记录小样本接入运行，并明确该阶段未覆盖反思复查。它不证明算法质量或完整上游复现。
-
-报告是本地被忽略产物，不是公开结果链接，也不声称覆盖全部情况。本次文档更新未调用模型。应报告已评估设计数、复查次数、拒绝、父版本变化及冻结后的 test 结果；一次设计运行成功不能验证历史驱动的多步搜索。

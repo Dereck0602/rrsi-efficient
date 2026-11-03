@@ -73,7 +73,3 @@ The final `promote` record includes `metric_calls`, `iterations`, `acceptance_cr
 The [search module](../flashrsi/algorithms/gepa/__init__.py) pins the sampling reference `gepa-ai/gepa-artifact` to `cbefbc1aa0f43dd39874ec4bf42211365dbda42e`. The [population module](../flashrsi/algorithms/gepa/_population.py) pins `gepa-ai/gepa` to `0632cdb5dcc052e690eab439e1b4a7e3e9cfe407`.
 
 This port rewrites one harness instruction file, omits compound-system module rotation, and does not implement system-aware merge. Reflection uses FlashRSI training feedback and trajectories; the [prompts](../flashrsi/algorithms/gepa/_prompts.py) define the requested reply format.
-
-## Validation scope
-
-The example is a bounded recipe, not a new measured result. A smoke that stops at a perfect minibatch does not cover rewriting, candidate screening, or full dev admission. Report which decisions occurred, the actual `metric_calls`, and the selected Snapshot. Separately validate both acceptance criteria or parent policies if claiming coverage of both.

@@ -52,7 +52,7 @@ docker compose version
 docker run --rm hello-world
 ```
 
-Harbor tasks require Docker and Compose. SWE-bench Verified, AppWorld, and BFCL have their own container integrations. The [benchmark index](../integrations/benchmarks.md) identifies which environment to prepare.
+SearchQA and HotpotQA in `context` mode require Docker to run each Target task in a separate Linux container. The container must reach the configured model endpoint. Harbor tasks require Docker and Compose. SWE-bench Verified, AppWorld, and BFCL have their own container integrations. The [benchmark index](../integrations/benchmarks.md) identifies which environment to prepare.
 
 ## Check a first configuration
 
@@ -60,4 +60,4 @@ Harbor tasks require Docker and Compose. SWE-bench Verified, AppWorld, and BFCL 
 flashrsi run --config examples/quickstart.yaml --check-only
 ```
 
-This local QA configuration does not need Docker. Continue with the [quickstart](../index.md#run-the-experiment) to supply model settings and run evolution.
+This local SearchQA configuration requires a running Docker Linux daemon, including for `--check-only`. Continue with the [quickstart](../index.md#run-the-experiment) to supply model settings and run evolution.

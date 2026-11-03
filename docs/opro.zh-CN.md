@@ -61,7 +61,3 @@ flashrsi run --config examples/quickstart.yaml \
 ## 来源与适配
 
 [提示模块](../flashrsi/algorithms/opro/_prompts.py)将 `google-deepmind/opro` 固定在 commit `a76bdce2cbf6d4a0d1e570a6fcfe17be9c2abdd7`。本地适配编辑一个原生指令文件，不实现上游向题目中插入指令的多个位置；提示证据使用从 FlashRSI 轨迹采样的任务输出和指标。当前行为见[搜索实现](../flashrsi/algorithms/opro/__init__.py)。
-
-## 验证范围
-
-上述命令是小规模运行示例，不是已报告的实验结果。初始化不能验证提案质量或完整演化。有效的 smoke 应记录是否生成新指令、train 评估是否完成，以及最终提升是否遵循评分历史。train 分数提高本身不代表泛化提升，最终 test 应单独报告。

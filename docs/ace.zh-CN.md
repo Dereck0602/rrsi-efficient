@@ -103,9 +103,3 @@ MiniAgent 通过原生指令文件加载 playbook；Claude Code 通过 `CLAUDE.m
 [实现](../flashrsi/algorithms/ace/__init__.py)和 [playbook 协议](../flashrsi/algorithms/ace/_playbook.py)记录的迁移参考为 FlashRSI commit `5efe9b438483710060183c6c3ecbc5062b410a58`，上游为 `ace-agent/ace` commit `82709de050e1db6e6ef2f07bcb0393560b94992a`。原迁移记录未独立核验该上游版本，本页描述本地行为。
 
 本地取舍包括用指令后缀替代 skill、在证据中明确提供训练答案、只在诊断之间重试、dev 调度独立于 ADD 是否成功，以及通过已有 Snapshot 恢复。未引入独立 Trainer/Recipe/checkpoint 层。[提示模板](../flashrsi/algorithms/ace/_prompts.py)定义回复协议。
-
-## 验证范围
-
-[选择测试](../tests/test_ace_selection.py)覆盖 offline 保留已选版本，包括同分情形。本地历史报告 `docs/smoke-banking-bm25-steps100-ace-miniagent-20261028.json` 将 ACE × MiniAgent × τ³ Banking 记为 `flow_passed`，包含 train、dev、Worker 和 test 记录。Dev 和 test reward 为零，完成流程不代表提升或覆盖 online 模式。
-
-报告是本地被忽略的产物，不是公开结果链接。本次文档更新未新增模型调用。报告应说明模式、遍历次数、反思/重试覆盖、策展决策和最终选择；模拟测试与初始化不能替代真实组合运行。

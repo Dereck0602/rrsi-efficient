@@ -143,7 +143,7 @@ python scripts/run_experiment.py --config experiment.local.yaml --cache-dir D:\F
 | `bbeh`、`supergpqa` | 固定版本公开数据，本地确定性评分，无新增依赖 | 显式划分实验 train/dev/test；BBEH 示例显式排除重复题组，SuperGPQA 使用答案字母协议，详见[轻量基准接入](lightweight-benchmarks.md) |
 | `aime` | AIME 2025/2026 数学题，无新增依赖 | 整数精确评分；详见[AIME 接入与历史记录](coding-math-benchmarks.md) |
 | `twowiki_multihopqa` | 固定版本 HF 镜像的 train/validation；也支持本地原始 JSON | 仅 context + answer_text（答案 EM/F1），不含 v1.1 别名、证据链或联合评分；显式划分实验 train/dev/test |
-| `searchqa`、`hotpotqa`、`musique`、`triviaqa`、`nq` | 固定来源的原生 QA 数据 | HotpotQA `fullwiki` 模式另需部署检索服务并配置 `benchmark.retrieval` |
+| `searchqa`、`hotpotqa`、`musique`、`triviaqa`、`nq` | 固定来源的原生 QA 数据 | SearchQA 和 HotpotQA `context` 模式需要 Docker Linux daemon，容器须能访问模型端点；HotpotQA `fullwiki` 模式需部署检索服务并配置 `benchmark.retrieval` |
 | `math` | 原生数据、数学评分依赖 | 原生答案须通过评分器校验；异常记录会明确报错 |
 | `hle`、`livemathbench` | 原生数据、Judge 依赖 | 上游要求授权时提供获批的 `HF_TOKEN`，或使用本地数据；配置独立 Judge |
 | `officeqa_pro` | 原生题目下载/本地加载 | 有权访问的数据及 `benchmark.corpus_path` 文档语料 |

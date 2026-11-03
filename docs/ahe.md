@@ -93,9 +93,3 @@ For N train tasks and S attempts, Target search costs at most `(1 + S) * N` task
 The [implementation](../flashrsi/algorithms/ahe/__init__.py), [manifest protocol](../flashrsi/algorithms/ahe/_manifest.py), and [prompts](../flashrsi/algorithms/ahe/_prompts.py) record `china-qijizhifeng/agentic-harness-engineering` commit `8b2a55d97590363fe50c3cc6b5e833b020a4bb4c`, via FlashRSI port reference `5efe9b438483710060183c6c3ecbc5062b410a58`. The inherited revision was not independently verified in the original migration record.
 
 Local choices include reply-based manifests rather than a manifest file in the checkout, actual Snapshot diff validation, bounded evidence, and continuing after invalid edits. The conservative rollback/non-regression variants and cross-process search resume are not implemented. Extra configuration keys do not create these capabilities.
-
-## Validation scope
-
-Local historical report `docs/smoke-ahe-20261023.json` records MiniAgent × HotpotQA with one training task and one candidate. Baseline and candidate both passed; predicted fixes were `INEFFECTIVE`, and no gain was established. It did not exercise a later verdict-feedback or rollback round. The report also noted a training example/task ID in a code docstring, limiting generalization claims.
-
-The report is an ignored local artifact, not a public result link or exhaustive coverage claim. This documentation update adds no model calls. A useful multi-step check must show the next Worker actually receiving prior verdicts; legal edits and successful execution alone do not establish improvement. Preserve the native execution interface: runtime/output-protocol failures can still abort search rather than becoming scored candidates.

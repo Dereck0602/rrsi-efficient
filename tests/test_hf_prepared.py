@@ -261,35 +261,42 @@ def test_runner_resolves_hf_for_frozen_evaluation_without_changing_snapshot(
     tmp_path, monkeypatch
 ):
     from flashrsi import _startup, runner
+    from flashrsi.agents.miniagent import MiniAgent
     from flashrsi.config import load_config
-    from flashrsi.core import Agent
+    from flashrsi.integrations import supplied_context
 
-    class TextAgent(Agent):
-        name = "fixture"
-
-        async def _run(self, prompt, working_dir=None):
-            return Trajectory(output="SECRET_LABEL")
+    async def setup(docker, name, network, payload, config, timeout):
+        request = json.loads((payload / "request.json").read_text())
+        assert "SECRET_LABEL" not in request["prompt"]
+        assert set(request) == {"agent_class", "config_yaml", "snapshot_path", "prompt"}
 
     benchmark_config, _, _ = package(tmp_path, monkeypatch)
     source = tmp_path / "harness"
     source.mkdir()
     (source / "components.yaml").write_text("prompt: [prompt.md]\n")
     (source / "prompt.md").write_text("Original harness")
-    monkeypatch.setitem(runner._AGENTS, "fixture", TextAgent)
+    monkeypatch.setattr(supplied_context.shutil, "which", lambda name: name)
+    monkeypatch.setattr(supplied_context, "_setup", setup)
+    monkeypatch.setattr(
+        supplied_context,
+        "_run",
+        AsyncMock(return_value=Trajectory(output="SECRET_LABEL")),
+    )
+    monkeypatch.setattr(supplied_context, "_cleanup", AsyncMock())
     monkeypatch.setattr(_startup, "_preflight", AsyncMock())
     config = load_config(
         overrides={
             "run": {"mode": "evaluate", "snapshot": "fixture.json"},
             "agent": {
-                "name": "fixture",
+                "name": "miniagent",
                 "source_dir": str(source),
-                "llm": {"model_name": "fixture"},
+                "llm": {"model_name": "fixture", "api_key": "fixture"},
             },
             "benchmark": benchmark_config,
         }
     )
     original = copy.deepcopy(dict(config.benchmark))
-    snapshot = TextAgent(config.agent).snapshot
+    snapshot = MiniAgent(config.agent).snapshot
     target, benchmark = asyncio.run(runner._prepare_target(config, snapshot=snapshot))
     assert config.benchmark == original
     assert target.snapshot.id == snapshot.id

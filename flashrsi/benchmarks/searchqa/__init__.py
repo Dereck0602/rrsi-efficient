@@ -170,6 +170,7 @@ class SearchQA(QABenchmark):
             task_id=task_id,
             question=prompt,
             ground_truth=answers[0],
+            env="supplied_context",
             metadata={
                 "answers": answers,
                 "source_split": source_split,

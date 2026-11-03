@@ -106,7 +106,7 @@ or using `pip`:
 python -m pip install -e ".[all,harbor]"
 ```
 
-For Docker-backed tasks, install [Docker Desktop](https://docs.docker.com/get-docker/) or Docker Engine.
+For Docker-backed tasks, including SearchQA and HotpotQA in `context` mode, install [Docker Desktop](https://docs.docker.com/get-docker/) or Docker Engine and start its Linux daemon. Target containers must be able to reach the configured model endpoint.
 
 ## Quick start
 
@@ -228,7 +228,7 @@ FlashRSI implements 13 RSI methods:
 | [ModularRSI](https://arxiv.org/abs/2609.14857) | Branch evolution | Independent branches; integration | Success / failure traces |
 | [Arbor](docs/arbor.md) | Branch evolution | Hypothesis tree and insight propagation | Train traces, dev scores |
 
-Arbor is newly integrated; the original diagram and experiment results below cover the twelve-method study. A small Arbor × Codex × WorkBench smoke is documented in the [Arbor validation notes](docs/arbor.md#真实模型验证); it does not establish a performance gain.
+Arbor is newly integrated; the original diagram and experiment results below cover the twelve-method study.
 
 For SkillOpt's fast/slow updates, selection rules, and budget settings, see the [SkillOpt guide](docs/skillopt.md).
 
@@ -237,6 +237,10 @@ Instruction-search guides cover [OPRO](docs/opro.md), [GEPA](docs/gepa.md), and 
 For experience accumulation, see [ACE](docs/ace.md) for playbook curation and offline/online selection, or [Evo-Harness](docs/evo-harness.md) for native skill compilation from a task stream.
 
 Directory-editing guides cover [AHE](docs/ahe.md), [ADAS](docs/adas.md), and [Meta-Harness](docs/meta-harness.md), with their editing bases, evidence, and final selection rules.
+
+For preservation-constrained branch search, see [DarwinX](docs/darwinx.md): repeated train evaluation, complementary recombination, and the distinction between admission and final selection.
+
+For independent module evolution and integration, see [ModularRSI](docs/modular-rsi.md), including native file mappings, contrastive diagnosis, execution gates, and final fallback rules.
 
 ### Overall results
 

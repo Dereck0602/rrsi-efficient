@@ -84,7 +84,3 @@ flashrsi run --config examples/quickstart.yaml \
 [实现模块](../flashrsi/algorithms/evoprompt/__init__.py)将 `microsoft/EvoPrompt` 固定在 commit `2e235c9410e38d531dabfae7fdd9cbded1577373`。本地适配通过 FlashRSI Snapshot 和完整 dev 适应度演化一个原生指令文件。[提示模块](../flashrsi/algorithms/evoprompt/_prompts.py)包含初始化、GA 和 DE 模板，回复使用 `<prompt>...</prompt>`。
 
 保留种群和算子机制不等于复现上游模型设置或实验结果。固定大小的种群可能含有重复或沿用的成员，而最终选择会保留跨代最佳 dev 版本。
-
-## 验证范围
-
-这些命令是小规模运行示例，不是新增实测结果。GA 运行不能验证 DE；算子只返回沿用成员时，也未覆盖候选评估。报告应说明变体、父版本/幸存策略、实际评估与沿用的成员，以及最终选择。初始化本身不能证明演化成功或泛化收益。

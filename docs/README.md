@@ -136,9 +136,9 @@ policy.
 | Evo-Harness | Skills | Task-stream accumulation | [Evo-Harness](evo-harness.md) · [中文](evo-harness.zh-CN.md) |
 | AHE | Harness resources | Successive edits and audit | [AHE](ahe.md) · [中文](ahe.zh-CN.md) |
 | ADAS | Harness resources | Design archive | [ADAS](adas.md) · [中文](adas.zh-CN.md) |
-| DarwinX | Harness resources | Branches and recombination | [DarwinX](darwinx.md) |
+| DarwinX | Harness resources | Branches and recombination | [DarwinX](darwinx.md) · [中文](darwinx.zh-CN.md) |
 | Meta-Harness | Harness resources | File-based history | [Meta-Harness](meta-harness.md) · [中文](meta-harness.zh-CN.md) |
-| ModularRSI | Modules and harness resources | Branch integration | [ModularRSI](modular-rsi.md) |
+| ModularRSI | Modules and harness resources | Branch integration | [ModularRSI](modular-rsi.md) · [中文](modular-rsi.zh-CN.md) |
 | RRSI | Harness resources | Reliability and cost admission | [RRSI](rrsi.md) |
 | Arbor | Harness resources | Hypothesis tree and propagated insights | [Arbor](arbor.md) |
 

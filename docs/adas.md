@@ -70,9 +70,3 @@ For D dev tasks and S attempts, Target search costs at most `(1 + S) * D` task e
 The [search implementation](../flashrsi/algorithms/adas/__init__.py) and [prompts](../flashrsi/algorithms/adas/_prompts.py) reference `ShengranHu/ADAS`, but **the upstream commit remains unpinned** in this repository. This is a mechanism port with a provenance gap to resolve, not a verified revision-level reproduction.
 
 The original fixed-framework `forward()` design is represented here by native harness files. The archive starts from one Target Snapshot rather than several predefined agent architectures. Reflection edits the same checkout, descriptions travel in replies, component rules constrain the design, and final selection uses FlashRSI's dev score. No separate agent DSL, multi-seed architecture library, or cross-process search resume is implemented.
-
-## Validation scope
-
-[Behavior tests](../tests/test_adas.py) cover regressions remaining in the archive, best-parent selection, ties, same-checkout reflection, and invalid edits. Local historical report `docs/smoke-adas-20261023.json` records tiny integration runs and explicitly excludes reflection-pass coverage in that stage. It does not establish algorithm quality or full upstream reproduction.
-
-The report is a local ignored artifact, not a public result link or exhaustive coverage statement. This documentation update makes no model calls. Report the number of evaluated designs, review passes, declines, parent transitions, and frozen test result; a successful one-step design run does not verify history-driven multi-step search.

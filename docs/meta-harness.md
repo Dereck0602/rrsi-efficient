@@ -75,9 +75,3 @@ To establish history use, inspect Worker file/tool traces. Merely providing hist
 The [implementation](../flashrsi/algorithms/meta_harness/__init__.py) pins `stanford-iris-lab/meta-harness` to commit `8123ccabe2b19fa1123090b2e5f1bacc20963ce8`, referencing the text-classification and Terminal-Bench examples. [Prompts](../flashrsi/algorithms/meta_harness/_prompts.py) define file retrieval and edit boundaries. The prior integration note associates the method with paper identifier `2603.28052`.
 
 This port uses one seed, one candidate per attempt, and one Benchmark primary metric to select one final Snapshot. It does not implement multiple initial harnesses, multi-objective accuracy/token frontiers, cross-process resume, upstream task-specific import/smoke checks, or cluster scheduling. The prompt's generalization instructions are not an independent anti-cheating verifier.
-
-## Validation scope
-
-[Behavior tests](../tests/test_meta_harness.py) cover history including regressions, relocation, ties, invalid-edit feedback, history-copy cleanup, Worker failure, and direct Python use. Local historical report `docs/smoke-metaharness-20261023.json` records MiniAgent × HotpotQA as `flow_passed`; its single final test task scored EM 0 and F1 0.5. Workflow completion is not a performance-gain claim.
-
-The report is an ignored local artifact, not a public result link or exhaustive validation record. This documentation update adds no model calls. Report actual retrieval actions, measured candidates, resource changes, strict-best updates, and frozen test results separately.

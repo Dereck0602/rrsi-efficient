@@ -98,11 +98,3 @@ The final `stream` decision identifies the retained Snapshot and online metric. 
 The [implementation](../flashrsi/algorithms/evo_harness/__init__.py) pins `A-EVO-Lab/a-evolve`, branch `release/evo-harness`, to `3c7c7b8c62a3f07da1d4407aa03f0ca079954bcf`, with paper identifier `2608.15071v2`. [Prompts](../flashrsi/algorithms/evo_harness/_prompts.py) define reflection and compilation roles.
 
 The port reflects from recorded context rather than continuing the solver session. Native skill selection/loading replaces a separate Selector call; Curators edit native files instead of a JSON operation library embedded into a prompt. Final Snapshots are independently runnable. Historical prompt-embedded JSON libraries do not satisfy this file protocol and require re-evolution. Current-revision evidence comes from the current batch rather than inherited source counts. These changes preserve the workflow but do not reproduce the complete upstream experiment.
-
-## Validation scope
-
-[Behavior tests](../tests/test_evo_harness.py) and [validation tests](../tests/test_evo_harness_validation.py) cover native-file curation and ownership/provenance boundaries. Local historical report `docs/smoke-evoharness-20261023.json` records MiniAgent × HotpotQA as `flow_passed_with_quality_limits`. A three-task training batch exercised topic and general compilation; earlier all-success batches did not compile anything.
-
-The report found retained training-specific answer content, showing that schema checks do not enforce semantic generalization. The run had no later train batch to demonstrate reuse, and final test displayed skill descriptions without calling `read_skill`. A separate loading probe is not end-to-end task-use evidence.
-
-These are scoped observations from a local ignored report, not a public result link or an exhaustive coverage claim. This documentation update adds no model calls. Report native loading, changed files, evidence sources, compilation levels, and online/test metrics separately; no performance gain follows from successful compilation alone.

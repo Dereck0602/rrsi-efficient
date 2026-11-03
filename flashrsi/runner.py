@@ -158,7 +158,7 @@ def _make_agent(cls, section, label):
 
 async def _prepare_target(config, *, snapshot=None):
     """Share benchmark bindings between search and frozen-Snapshot evaluation."""
-    from flashrsi._startup import _preflight
+    from flashrsi._startup import _preflight, _supplied_context
 
     await _preflight(config)
     target = _make_agent(
@@ -212,6 +212,10 @@ async def _prepare_target(config, *, snapshot=None):
         from flashrsi.integrations.browsecomp import bind
 
         bind(target, benchmark)
+    if _supplied_context(config.benchmark):
+        from flashrsi.integrations.supplied_context import bind
+
+        bind(target)
     if isinstance(benchmark, HotpotQA) and benchmark.mode == "fullwiki":
         from flashrsi.integrations.hotpotqa import bind
 

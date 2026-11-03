@@ -11,6 +11,7 @@ import unittest
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import yaml
@@ -154,13 +155,24 @@ class LauncherTests(unittest.TestCase):
             )
             return archives[kwargs["filename"]]
 
-        with patch("huggingface_hub.hf_hub_download", side_effect=download) as fetch:
+        with (
+            patch("huggingface_hub.hf_hub_download", side_effect=download) as fetch,
+            patch("shutil.which", side_effect=lambda name: name),
+            patch(
+                "flashrsi._startup._docker",
+                return_value=SimpleNamespace(returncode=0, stdout="linux"),
+            ) as docker,
+        ):
             with patch(
                 "flashrsi.agents.MiniAgent._run",
                 side_effect=AssertionError("No models during check"),
             ):
                 self.assertEqual(launcher._run(path, True), 0)
             self.assertEqual(fetch.call_count, 3)
+            self.assertTrue(
+                all(call.args[0] == "info" for call in docker.call_args_list)
+            )
+            self.assertGreater(docker.call_count, 0)
         self.assertIn("train=1, dev=1, test=1", self.output.getvalue())
         self.assertFalse((self.root / "runs").exists())
 

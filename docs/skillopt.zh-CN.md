@@ -105,9 +105,3 @@ Target 开销包括初始 dev、每个训练 batch、发生变化的候选 dev�
 本地实现采用固定编辑预算、组件范围内的多文件 JSON 补丁、`seed + epoch` 打乱，以及先切 minibatch 再分成功/失败的顺序。快慢资源候选都经过严格 dev 筛选。复现实验还需要对齐模型设置、初始技能、数据成员、评分和恢复行为。
 
 实现入口：[搜索主循环](../flashrsi/algorithms/skillopt/__init__.py)、[提示模板](../flashrsi/algorithms/skillopt/_prompts.py)和[补丁协议](../flashrsi/algorithms/skillopt/_patch.py)。
-
-## 验证范围
-
-[SearchQA 复现记录](./searchqa-deepseek-reproduction.md)包含 MiniAgent 和 Claude Code 上较完整的历史运行，以及协议差异和恢复尝试。这些结果对应各自记录的配置。
-
-快速示例有意限制为一次快速更新。初始化检查不能证明真实模型运行成功，只覆盖快速更新的 smoke 也不能验证慢速指导或 meta-skill 行为。报告运行结果时，应注明算法、Target、Benchmark、预算以及实际执行的阶段。

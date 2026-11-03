@@ -98,11 +98,3 @@ Worker 执行失败向外报错。非法经验可以跳过，非法编译编辑�
 [实现](../flashrsi/algorithms/evo_harness/__init__.py)将 `A-EVO-Lab/a-evolve` 的 `release/evo-harness` 分支固定到 `3c7c7b8c62a3f07da1d4407aa03f0ca079954bcf`，论文编号为 `2608.15071v2`。[提示模板](../flashrsi/algorithms/evo_harness/_prompts.py)定义反思和编译角色。
 
 本地适配从记录上下文反思，不续接 solver 会话；原生技能选择/加载替代独立 Selector 调用；Curator 编辑原生文件，替代嵌在 prompt 中的 JSON 操作库。最终 Snapshot 可独立运行。历史 prompt 内嵌 JSON 库不符合该文件协议，需要重新演化。当前修订依据本批证据，不继承旧来源计数。这些变化保留流程，但不等同于完整上游实验复现。
-
-## 验证范围
-
-[行为测试](../tests/test_evo_harness.py)和[验证测试](../tests/test_evo_harness_validation.py)覆盖原生文件策展及归属/来源边界。本地历史报告 `docs/smoke-evoharness-20261023.json` 将 MiniAgent × HotpotQA 记为 `flow_passed_with_quality_limits`。三题训练批次覆盖了 topic 与 general 编译；此前全部成功的批次没有触发编译。
-
-报告发现技能保留了训练题特定答案，说明 schema 检查不保证语义泛化。该运行没有后续训练批次证明复用，最终 test 展示了技能 description，但未调用 `read_skill`。独立加载探针不能替代端到端任务使用证据。
-
-这些是本地被忽略报告中的有限观察，不是公开结果链接，也不声称覆盖全部组合。本次文档更新未增加模型调用。应分别报告原生加载、文件变化、来源证据、编译层级和 online/test 指标；编译成功本身不能证明性能收益。
