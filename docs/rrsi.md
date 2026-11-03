@@ -1,99 +1,133 @@
 # RRSI
 
-按[官方代码固定版本](https://github.com/google-research/rrsi/tree/be50316e1db05914068a973f322770ef08ed7ba1)
-独立移植搜索机制。执行、评分、目录编辑、版本管理和记录分别复用现有的
-Agent、Benchmark、Worker、Snapshot 和 Algorithm；没有增加框架公共接口。
+**English** · [简体中文](./rrsi.zh-CN.md)
 
-## 从 `evolve()` 阅读算法
+[All algorithms](./integrations/algorithms.md) · [Example configuration](../examples/rrsi.yaml)
 
-1. 在整个 `train` 上评估当前 Snapshot，每题运行 `k` 次，得到分数和目标 token 成本；
-   `delta: null` 时用基线的重复 trial 校准噪声带。
-2. 选择低分任务最差 trial、高分任务最佳 trial。analyst 只看任务表，调度 digester
-   通过 Worker 文件工具调查完整脱敏轨迹，再汇总 failure modes、capability gaps
-   和 success habits。支持三种调查视角和追问，保留前轮模式名称。
-3. 计算余弦退火编辑预算、停滞探索槽和无近期收益的 prune 建议，将分析、代表轨迹
-   和完整编辑历史保存为一个固定的本轮 context。
-4. 每个候选从同一当前 Snapshot 出发，读取同一 context。Worker 编辑 checkout，
-   声明独立机制及其预测影响；critic 审查完整 diff，可在原 checkout 修复。
-   Snapshot 检查文件权限与运行凭据，之后编译 Python 并通过目标原生 rollout 做 smoke。
-5. 评估候选并核对预测，按 RRSI 的分数／成本规则选出最高分的可接受候选。
-   全部候选完成后才移动当前版本，记录每项编辑的结果与归因，进入下一轮。
+RRSI uses trajectory investigation and edit history to propose harness changes under a shrinking mechanism budget. Candidates must respect a historical score floor and a score/token-cost rule. Each round selects the highest-scoring admissible candidate, then search continues from that winner. The final result is the last accepted version, not necessarily the historical highest-scoring version.
 
-预算限制独立机制数量，一个机制可以涉及多个文件。每项声明包含
-`id/component/hypothesis/targets_mode/predicted_affected/retroactive_check/paths`，
-必须覆盖真实修改。九种 RRSI 标签用于探索、历史和新颖性，可编辑范围只有
-Snapshot 的组件声明这一份。标签根据各项编辑自己的文件 diff 校正，可选
-`component_signals` 补充目标 harness 的机制信号；critic 判断接线与独立性。
-prune 是接受相同审查与测量的删除提案，不自动删除当前版本。
+## Requirements and a small run
 
-修复在同一个 checkout 内累计修改，返回的清单必须覆盖相对 incumbent 的全部
-差异，包括之前尝试留下的文件；漏报错误会列出缺失路径。一个机制及其配置接线
-归在同一项声明中，不按文件拆成多项。digester 的 `evidence[].quote` 必须是
-脱敏 trace 中某个解码后 JSON 值的原文子串；字段路径放在 `where`，不能把
-序列化的键值对或自行拼出的指标描述当作引用。
-analyst 表格中的 `rewards` 列出各次试验分数，但每个任务只提供 `trial/reward`
-指明的代表轨迹；切换调查视角不会切换试验。其他试验的具体过程不可从汇总分数
-还原，报告应保留证据缺口，不重复请求 digester 比较未提供的轨迹。
+Train must be non-empty with unique task IDs, and primary scores must be in `[0, 1]`. A separate file-editing Agent Worker is required (`algorithm.worker.type: agent`). Target and Worker have independent model and connection settings. The editable scope is every Target-declared component; semantic RRSI tags do not grant additional file permissions. Dev is unused; the runner evaluates test after final selection.
 
-编辑历史是唯一反馈账本，包含完整 diff、胜负、分数／成本变化与 `attribution`。
-预测命中和未预测退步按逐题均值核对，退步阈值固定为 `1/k`；未知预测任务不进入
-命中率分母。捆绑机制共享一次候选测量，归因不代表逐项因果消融。
-无效或未评测候选保留失败原因，但不进入已尝试组件和收益统计。
+Follow [Installation](./guide/installation.md), configure both roles in [examples/rrsi.yaml](../examples/rrsi.yaml), then run from the repository root with bundled local tasks:
 
-## 选择规则
+```bash
+flashrsi run --config examples/rrsi.yaml \
+  --benchmark.data_path ./examples/data/quickstart.jsonl \
+  --benchmark.limit null \
+  --benchmark.split_counts '{train: 3, dev: 1, test: 1}' \
+  --algorithm.T 1 \
+  --algorithm.m 1 \
+  --algorithm.k 2 \
+  --algorithm.m_draft 1 \
+  --algorithm.n_fail_traces 2 \
+  --algorithm.n_success_traces 1
+```
 
-设 `dS = S' - S_t`、`dC = (C' - C_t) / C_t`：
+This requests one round and one candidate, with two repetitions per full measurement. Investigation, review, repairs, and native agent turns can add many Worker calls. Append `--check-only` for initialization without model calls or remote authentication validation. Complete Target token usage is required during actual search; initialization cannot establish that accounting.
 
-- `S' < S* - delta`：拒绝；历史最佳分数 `S*` 只随接受版本提高。
-- `dS > delta`：要求 `dC <= beta0 + beta1*dS`。
-- 其余情况：要求 `w_s*dS - w_c*dC + w_n*novelty > 0`。
-- `guards` 中的指标变化约束也必须通过。可接受候选按分数选择，平分保留较早者；
-  全部拒绝时保留当前版本。
+## Search and investigation
 
-novelty 仅计算尚未出现在获胜编辑中的 `client_tool/skill/memory/subagent` 类型。
-停滞由过去 `w` 轮的分数变化判断，最后 `m_draft` 个槽要求实际探索未测过的组件。
-预算为 `ceil(b_min + (b_max-b_min)*(1+cos(pi*t/T))/2)`。
+1. Measure the initial Snapshot on all train tasks `k` times. Retain task scores, trajectories, token costs, and optional weights/guard metrics. If `delta` is null, calibrate the noise band from baseline trials; otherwise use the configured value.
+2. Rank tasks by their measured mean score. Choose up to `n_fail_traces` low-scoring tasks and their worst trial, then up to `n_success_traces` high-scoring tasks not already selected and their best trial. These labels indicate ranking, not a hard pass/fail threshold.
+3. The analyst sees the task table and requests digests of representative traces. The digester reads a separate redacted trace file using Worker tools. Investigation supports failure, capability, and success perspectives plus follow-up questions; changing perspective does not expose a different trial. A report needs at least one digest.
+4. Freeze a round context containing analysis, representative traces, the current score/cost, historical best score, edit budget, exploration/pruning directives, and previous edit history. All `m` sibling candidates start from the same current Snapshot and read this same context; one sibling does not learn from another's results during the round.
+5. Propose each candidate, check and review its edit, then compile and execute a small native smoke. After proposals are generated, fully measure eligible candidates and apply the selection rules below. All comparisons use the saved incumbent measurement, not a fresh incumbent re-evaluation each round.
+6. Record every edit's outcome and attribution after selecting the round winner. Advance the search version if a winner exists; otherwise retain the incumbent. Update the historical best score only from accepted incumbents. After `T` rounds, promote the final current version once.
 
-主指标须在 `[0,1]`，失败 trial 奖励为零并留在分母中；失败比例超过
-`invalid_missing_frac` 则测量无效。默认等权；`weight_metric` 与 `guards` 可读取
-Benchmark 已评分的 `Trajectory.metrics`，统计缺失会拒绝测量。runner 的最终 test
-继续遵守框架 `Results.score` 的主指标算术均值契约，没有额外的加权 test 分数支路。
-使用加权演化时，最终 test 的均值不能直接当作同一加权协议的结果。
+## Admission, ties, and final selection
 
-成本使用每次完整目标运行的 token 总数，包括缓存及目标内部辅助模型／子 agent，
-不包含演化 Worker。支持现有 MiniAgent、OpenAI 与 Claude SDK usage 形式，优先采用
-非空 SDK `model_usage` 会话统计，避免只计算父 agent。任一 trial 统计不完整或成本
-均值非正就拒绝；基线无效则终止。框架协议错误与 Worker 调用失败继续向外传播。
+Let S and C be incumbent score and mean Target token cost; S' and C' are candidate values, and S* is the highest score reached by accepted versions:
 
-自动校准默认按任务内 trial 做 2000 次 bootstrap，取
-`delta_z * sqrt(2) * std(bootstrap scores)`。`calibration_evals > 1` 可使用重复基线
-评测的样本标准差，退化时回退到 pooled bootstrap；要求 `k >= 2` 或至少两次校准。
-校准不挑选最好一次作为基线；也可显式提供实测 `delta`。
+```text
+dS = S' - S
+dC = (C' - C) / C
 
-## 配置与边界
+if S' < S* - delta:
+    reject
+elif dS > delta:
+    require dC <= beta0 + beta1 * dS
+else:
+    require w_s * dS - w_c * dC + w_n * novelty > 0
 
-运行 [示例](../examples/rrsi.yaml)：`uv run flashrsi run --config examples/rrsi.yaml`。
-搜索参数沿用上游符号，其余默认值见 `RRSI._defaults`。分析交互上限固定 30 次，
-digest 上限 6000 字符，格式错误最多修复 3 次；这些协议常量不再作为配置项。
-`repair_rounds` 控制提案修复次数，`smoke_n` 控制原生 smoke 任务数，0 时只编译。
-取消 `component_paths/critic_patterns/max_review_chars/briefs/constitution/
-analysis_max_turns/digest_max_chars/protocol_retries/smoke_task_ids/regression_threshold`
-等额外配置；旧键会明确报错。Worker 的模型、提示与执行配置仍由框架提供。
+also require all configured guards to pass
+```
 
-代码只保留两个文件：`__init__.py` 实现算法，`_prompts.py` 存放长提示词。
-`evolve()` 呈现基线评测、调查、提案与选择；这些算法步骤用同一个类的私有方法
-实现，数值规则和编辑解析留在文件下方。评测聚合直接在 `_measure()` 内完成，
-没有候选状态类、独立评估层或并行 scoreboard。角色调用由框架自动记录，完整
-分析在 round context，归因在 edit history；摘要数量直接从列表计算。
-提案读取临时 `context.json` 和 `current-diff.txt`；后者提供修复开始时相对 incumbent
-的累计差异，首次为空，帮助 Worker 保留此前编辑的清单。两者随 checkout 移动并在提交前清理；原文引用
-与只读 trace 仍检查，不为角色回复搭建完整字段校验体系。
-critic 区分清单中必需的任务归因和版本文件中的任务记忆；也不把 diff 未包含的
-原生加载器误判为不存在。任务特化、未接线机制等规则不变，拒绝理由需要对应实际文件证据。
+Novelty counts distinct `client_tool`, `skill`, `memory`, and `subagent` tags absent from previously winning edits. Other tags do not earn this bonus. Tagging is checked against each declared edit's actual diff, with optional `component_signals` supplying additional regex evidence.
 
-没有复制上游 git 管理、Domain adapter、角色模型配置、恢复／重评命令及三套起始
-harness。示例使用 SearchQA 和 MiniAgent，属于框架内的机制验证。官方 coding 实验
-使用 Terminus-2、Terminal-Bench 2.1 的 89 个 evolve 任务及
-`T=20/k=2/m=2/w=3/delta=0.017/beta1=44.5/w_s=0/repair_rounds=5/invalid_missing_frac=0.2`。
-框架默认 Terminal-Bench 数据仍是 2.0；严格复现需要核对起始 harness、数据、模型
-和执行限制。
+Among admissible candidates, choose the highest **score**, not the highest utility or lowest cost. Equal candidate scores retain the earlier generated candidate. The incumbent is not included in that tie comparison: a same-score candidate can replace it through lower cost or novelty. A slightly lower-scoring candidate can also replace it within the historical floor when the utility rule passes. If none qualifies, keep the incumbent.
+
+`guards` constrain the unweighted mean change of named Benchmark metrics relative to the incumbent, using `max_drop` and/or `max_rise`. They apply in addition to the score/cost rule. An admissible candidate that loses to another candidate is recorded as `LOST`; only the winner contributes to accepted-component novelty history. Final selection returns the last accepted version without restoring the Snapshot associated with S*.
+
+## Scores, failures, costs, and calibration
+
+The score is an equal-weight mean over all train trials unless `weight_metric` names a strictly positive metric weight for every trial. Error-status trials receive reward zero and remain in the denominator. If their fraction exceeds `invalid_missing_frac`, the measurement is invalid. Missing weights, missing guard metrics, incomplete token usage, or nonpositive mean token cost also invalidate it. An invalid baseline aborts search; an invalid candidate measurement is rejected. Framework protocol errors and Worker failures can still propagate.
+
+Cost is the mean token total per complete Target task execution, including cached tokens and reported internal auxiliary/subagent work, excluding evolution Worker calls. The reader supports native usage forms and prioritizes nonempty SDK `model_usage` session totals to avoid counting only the parent agent or double-counting totals. It cannot infer unreported usage. This is token cost, not money or latency.
+
+With `delta: null`, default calibration bootstraps trials within each task 2,000 times and uses `delta_z * sqrt(2) * std(bootstrap scores)`. With multiple baseline measurements, a positive sample standard deviation supplies the band; otherwise pooled within-task bootstrap is rescaled to the original evaluation size. Calibration retains the first baseline as incumbent rather than selecting the best calibration run. Automatic calibration requires `k >= 2` or `calibration_evals >= 2`.
+
+The runner's final test score remains the primary metric's arithmetic mean under the framework contract. It is not an extra weighted RRSI test score; weighted search scores and that final mean may represent different objectives.
+
+## Edit budget, review, and repairs
+
+For zero-based round t, the independent-mechanism budget is:
+
+```text
+ceil(b_min + (b_max - b_min) * (1 + cos(pi * t / T)) / 2)
+```
+
+The implementation rounds the intermediate value to nine decimal places before taking the ceiling. Rounds use `t = 0 ... T-1`, so the final round need not reach exactly `b_min`. One mechanism can span several files; the budget is not a file count. After `w` rounds without score gain beyond `delta`, the last `m_draft` slots must exercise an untried semantic component if any remain. Prune directives identify components without positive measured gain in the recent `n_prune` window; they are suggestions for reviewed deletion proposals, not automatic deletion.
+
+`<EDITS>` contains JSON describing independent mechanisms with `id`, `component`, `hypothesis`, `targets_mode`, `predicted_affected`, `retroactive_check`, and `paths`; optional `operation` is `change` or `prune`. IDs must be unique and paths must cover the actual cumulative diff. Supported tags are `prompt`, `control_flow`, `config`, `output_plumbing`, `context_mgmt`, `client_tool`, `skill`, `memory`, and `subagent`.
+
+Each candidate gets an initial edit plus at most `repair_rounds` repairs in the same checkout. The Worker reads `context.json` and `current-diff.txt`; repaired declarations must account for all changes relative to the incumbent. Snapshot constraints, empty edits, credential-pattern checks, binary-diff rejection, critic objections, and reserved-slot compliance are handled before smoke. The critic reviews the full diff and returns a `<REVIEW>` verdict. Unparseable critic replies are retried up to three calls, then treated as rejection.
+
+Once those gates pass, compile all candidate `.py` files and execute up to `smoke_n` selected representative train tasks in train order. Error status fails the smoke; score improvement is not required here. `smoke_n: 0` omits execution but still compiles. A compile or smoke failure returns an invalid candidate directly; it does not re-enter the same candidate's repair loop. Temporary evidence files are removed before resource commit.
+
+Digest quotes must match a substring of a decoded trace value, and the trace file must remain unchanged. Each digest has a 6,000-character limit and up to three protocol attempts. Analyst interaction is capped at 30 turns; these are protocol constants, not configurable search budgets.
+
+## Parameters and cost
+
+Defaults belong under `algorithm`. RRSI rejects unknown algorithm options.
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `T` | `20` | Search rounds, integer at least 1. |
+| `k` | `2` | Repetitions per full train measurement, integer at least 1. |
+| `m` | `2` | Sibling candidate slots per round, integer at least 1. |
+| `b_min` | `1` | Minimum mechanism-budget parameter, integer at least 1. |
+| `b_max` | `4` | Initial mechanism-budget parameter, integer at least `b_min`. |
+| `w` | `3` | Stagnation lookback in rounds, integer at least 1. |
+| `m_draft` | `1` | Reserved exploration slots when stalled, integer in `[0, m]`. |
+| `delta` | `None` | Nonnegative score noise band; null enables calibration. |
+| `delta_z` | `2.0` | Nonnegative calibration multiplier. |
+| `beta0` | `0.1` | Nonnegative base relative-cost allowance for clear gains. |
+| `beta1` | `40.0` | Nonnegative extra cost allowance per unit of clear score gain. |
+| `w_s` | `100.0` | Nonnegative within-band score weight. |
+| `w_c` | `15.0` | Nonnegative within-band relative-cost penalty. |
+| `w_n` | `0.5` | Nonnegative structural novelty weight. |
+| `n_prune` | `4` | Recent-round pruning window, integer at least 1. |
+| `repair_rounds` | `5` | Extra proposal repair attempts, integer at least 0. |
+| `invalid_missing_frac` | `0.15` | Maximum error-trial fraction, in `[0, 1]`. |
+| `seed` | `7` | Integer bootstrap seed; does not control model sampling. |
+| `n_fail_traces` | `22` | Low-score representative task count, integer at least 0. |
+| `n_success_traces` | `6` | High-score representative task count, integer at least 0; total requested representatives must be positive. |
+| `calibration_evals` | `1` | Total baseline measurements when auto-calibrating, integer at least 1. |
+| `smoke_n` | `2` | Maximum representative tasks per candidate smoke, integer at least 0. |
+| `component_signals` | `{}` | Semantic tags mapped to nonempty regex lists; not file permissions. |
+| `weight_metric` | `None` | Optional positive per-trial weighting metric. |
+| `guards` | `{}` | Metric names mapped to nonnegative `max_drop`/`max_rise` limits. |
+
+For N train tasks, full measurement cost is `N * k` Target task executions. Baseline/calibration costs `N * k * calibration_evals` when delta is automatic, otherwise `N * k`. Full candidate measurements cost at most `T * m * N * k`; candidate smokes add at most `T * m * min(smoke_n, N, n_fail_traces + n_success_traces)`. Invalid proposals can reduce these counts. Final test, retries, and native model/tool turns are additional.
+
+Worker cost is separate: per-candidate editing has at most `repair_rounds + 1` calls, with up to three critic calls per review reached. Each round also includes analyst and digest calls; a digest request can investigate up to eight traces. The mechanism budget does not cap all these API requests.
+
+## Records and adaptation
+
+`measurement` records scores, costs, trial evidence and guard metrics; `calibration` records the noise band. `rrsi-context` freezes the common round evidence. `critic`, `repair`, and `smoke-gate` explain proposal handling. `edit-history` retains full diffs, `admissible`, `accepted`, `ACCEPTED/LOST/REJECTED`, score/cost changes, and attribution. Final `promote` includes final score/cost, historical best score, and delta.
+
+Attribution checks predicted tasks against per-task mean changes and marks unpredicted drops of at least `1/k`. Unknown predicted task IDs are excluded from the hit-rate denominator. Bundled edits share a candidate measurement; attribution is not a causal ablation of each mechanism. Invalid or unmeasured candidates retain reasons but do not count as measured component attempts or gains.
+
+The [implementation](../flashrsi/algorithms/rrsi/__init__.py) independently ports mechanisms from [google-research/rrsi](https://github.com/google-research/rrsi/tree/be50316e1db05914068a973f322770ef08ed7ba1), pinned to `be50316e1db05914068a973f322770ef08ed7ba1`. Agent, Benchmark, Worker, Snapshot and Algorithm supply execution, grading, edits, versioning and records. Upstream Git management, Domain adapters, role-specific model configuration, resume/re-evaluation commands and starting harnesses are not replicated. The SearchQA/MiniAgent example is a local adaptation, not the original coding experiment configuration.

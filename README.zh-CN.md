@@ -144,7 +144,7 @@ FlashRSI 目前实现 13 种 RSI 方法：
 | [ADAS](https://arxiv.org/abs/2408.08435) | 归档搜索 | 设计归档 | 设计记录、开发集分数 |
 | [DarwinX](https://arxiv.org/abs/2608.07545) | 分支演化 | 分支与重组 | 重复结果、轨迹 |
 | [ModularRSI](https://arxiv.org/abs/2609.14857) | 分支演化 | 独立分支；集成 | 成功 / 失败轨迹 |
-| [Arbor](docs/arbor.md) | 分支演化 | 假设树与经验向上归纳 | Train 轨迹、dev 分数 |
+| [Arbor](docs/arbor.zh-CN.md) | 分支演化 | 假设树与经验向上归纳 | Train 轨迹、dev 分数 |
 
 Arbor 为新接入算法；原框架图和下方实验表仍对应十二方法的已有研究。
 
@@ -159,6 +159,10 @@ SkillOpt 的快慢更新、选优规则和参数预算见 [SkillOpt 使用说明
 带能力保留约束的分支搜索见 [DarwinX](docs/darwinx.zh-CN.md)，介绍 train 重复评估、互补重组，以及准入与最终选中的区别。
 
 模块独立演化与集成见 [ModularRSI](docs/modular-rsi.zh-CN.md)，介绍原生文件映射、对比诊断、执行门禁和最终回退规则。
+
+带 token 成本约束的历史驱动搜索见 [RRSI](docs/rrsi.zh-CN.md)，介绍噪声校准、机制预算、候选准入和轮内胜者选择。
+
+假设树规划见 [Arbor](docs/arbor.zh-CN.md)，介绍从当前 trunk 出发的实验、train/dev 采纳门禁与经验向上综合。
 
 这些方法均适配了 FlashRSI 的资源与评估接口。Evo-Harness 和 Harness 资源编辑方法需要 Agent Worker；具体条件见[选型与运行指南](docs/running-experiments.md#choose-an-algorithm-and-harness)。
 

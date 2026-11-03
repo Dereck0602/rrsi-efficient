@@ -139,8 +139,8 @@ policy.
 | DarwinX | Harness resources | Branches and recombination | [DarwinX](darwinx.md) · [中文](darwinx.zh-CN.md) |
 | Meta-Harness | Harness resources | File-based history | [Meta-Harness](meta-harness.md) · [中文](meta-harness.zh-CN.md) |
 | ModularRSI | Modules and harness resources | Branch integration | [ModularRSI](modular-rsi.md) · [中文](modular-rsi.zh-CN.md) |
-| RRSI | Harness resources | Reliability and cost admission | [RRSI](rrsi.md) |
-| Arbor | Harness resources | Hypothesis tree and propagated insights | [Arbor](arbor.md) |
+| RRSI | Harness resources | Reliability and cost admission | [RRSI](rrsi.md) · [中文](rrsi.zh-CN.md) |
+| Arbor | Harness resources | Hypothesis tree and propagated insights | [Arbor](arbor.md) · [中文](arbor.zh-CN.md) |
 
 Implementations are adaptations to FlashRSI's resource and evaluation interfaces. A registered method is
 available through the runner, but registration does not mean every method, harness, and benchmark
