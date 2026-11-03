@@ -60,6 +60,8 @@ export default defineConfig({
         item('Meta-Harness', '/meta-harness'),
         item('DarwinX', '/darwinx'),
         item('ModularRSI', '/modular-rsi'),
+        item('RRSI', '/rrsi'),
+        item('Arbor', '/arbor'),
         item('Benchmarks', '/integrations/benchmarks'),
         item('Datasets & splits', '/integrations/datasets'),
         item('Harnesses', '/integrations/harnesses'),

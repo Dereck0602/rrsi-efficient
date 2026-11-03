@@ -27,8 +27,8 @@ Use these detailed notes for version boundaries, method settings, source revisio
 | DarwinX | [Branches, recombination, and admission](./darwinx.md) · [中文](./darwinx.zh-CN.md) |
 | Meta-Harness | [File history and candidate search](./meta-harness.md) · [中文](./meta-harness.zh-CN.md) |
 | ModularRSI | [Modules, integration, and evolution data](./modular-rsi.md) · [中文](./modular-rsi.zh-CN.md) |
-| RRSI | [Selection rules, budgets, and costs](./rrsi.md) |
-| Arbor | [Hypothesis tree, trunk adoption, and insight propagation](./arbor.md) |
+| RRSI | [Selection rules, budgets, and costs](./rrsi.md) · [中文](./rrsi.zh-CN.md) |
+| Arbor | [Hypothesis tree, trunk adoption, and insight propagation](./arbor.md) · [中文](./arbor.zh-CN.md) |
 
 ## Benchmarks and environments
 

@@ -1,71 +1,119 @@
-# Arbor 算法接入
+# Arbor
 
-来源：[RUC-NLPIR/Arbor](https://github.com/RUC-NLPIR/Arbor/tree/7cdaf1fa6d779b3d5e340052357bf3fe55dfed93)，
-核对版本 `7cdaf1fa6d779b3d5e340052357bf3fe55dfed93`。主要参考
-`src/coordinator/idea_tree.py`、`prompts.py`、`tools/tree_ops.py`、
-`tools/executor_run.py` 与 `tools/git_ops.py`。
+**English** · [简体中文](./arbor.zh-CN.md)
 
-这是放在 `flashrsi/algorithms/arbor/` 下的核心机制适配：假设树、Coordinator
-选择与剪枝、从当前 trunk 出发的 Executor，以及从实验向祖先逐级归纳经验。
-原版独立 CLI、MCP、Dashboard 和 benchmark zoo 不属于本算法接入。
+[All algorithms](./integrations/algorithms.md) · [Example configuration](../examples/arbor.yaml)
 
-## 搜索流程
+Arbor organizes search as a hypothesis tree. A Coordinator expands research directions and chooses experiments; an Executor implements each hypothesis from the current selected trunk. Train screens candidates, while strict dev improvement controls adoption. Experiment lessons are synthesized upward through the tree to inform later planning. Tree ancestry describes ideas, not code inheritance.
 
-1. 对初始 Snapshot 分别评估完整 train、dev；存在失败任务则终止，避免用无效基线搜索。
-2. Coordinator 从 `ROOT` 扩展研究方向，再扩展具体实验假设。它可以选择待执行叶节点、
-   继续扩展已有方向或已测实验、剪掉整个子树，或提前停止。
-3. Executor 在当前 trunk 的 checkout 中实现选中的假设。树上的 `parent_id`
-   表示概念关系，`base_snapshot_id` 表示这次编辑实际使用的代码基线，两者各自保留。
-4. 合法且有实际改动的候选在 train 上评估。候选相对当前 trunk 的 train 增益达到
-   `merge_threshold`，才进入 dev 检查。dev 严格提高才更新内部 trunk；同分保留此前版本。
-5. Worker 根据实际实现、train 轨迹和记录的分数提炼实验经验，然后逐层综合兄弟节点的
-   经验，更新研究方向与 ROOT 的 insight。退步实验和拒绝原因也保留。
-6. 搜索结束时通过 `_promote` 选定最终 Snapshot。runner 再执行 sealed test，
-   test 的题目、答案、轨迹和分数不进入 Coordinator、Executor 或 insight 提示。
+## Requirements
 
-整个过程使用原有 `Algorithm`、`Worker.ask/edit`、`Snapshot`、`Benchmark` 接口，
-没有另建执行框架或按具体 harness / benchmark 名称分支。
+Train and dev must both be non-empty. Task IDs must be unique within and disjoint across train/dev/test. Baseline train and dev trajectories must all finish; otherwise search stops. The algorithm uses the Benchmark's primary-metric mean without a special `[0, 1]` restriction, and interprets larger scores as better.
 
-## 配置与运行
+The Worker must be a separate file-editing Agent (`algorithm.worker.type: agent`) with independent model and connection settings. Coordinator, Executor, reflection, and synthesis are different prompts sent to this same configured Worker, not separately configured models. All Target-declared components are editable (`evolve_scope = {"*"}`); editing runtime code requires a harness that exposes it.
 
-见 [examples/arbor.yaml](../examples/arbor.yaml)。它从固定 HF 版本抽取 9 道 HotpotQA
-context 题目，Target 为 MiniAgent、Worker 为 Claude Code；两处模型及凭据独立配置。
-也可以将 Worker 改成其他支持目录编辑的 Agent。
+Dev is used repeatedly for selection and is not an independent final test. Test tasks, scores, and trajectories are not supplied to these search prompts. The runner evaluates the selected Snapshot on test after search.
+
+## Run a small example
+
+Follow [Installation](./guide/installation.md), configure both role connections in [examples/quickstart.yaml](../examples/quickstart.yaml), and run from the repository root:
 
 ```bash
-uv run flashrsi run --config examples/arbor.yaml --check-only
-uv run flashrsi run --config examples/arbor.yaml
+flashrsi run --config examples/quickstart.yaml \
+  --algorithm arbor \
+  --algorithm.worker.type agent \
+  --algorithm.worker.name miniagent \
+  --algorithm.worker.max_turns 30 \
+  --algorithm.max_cycles 2 \
+  --algorithm.max_depth 2 \
+  --algorithm.merge_threshold 0.0
 ```
 
-自动实验入口同样可以使用此配置：
+This uses local SearchQA data and permits at most two dispatched experiments. Coordinator planning can stop earlier, and the Worker may make multiple native model/tool calls per request. Append `--check-only` for initialization without model calls or remote authentication validation. The dedicated [Arbor example](../examples/arbor.yaml) instead uses a pinned HotpotQA context dataset with MiniAgent Target and Claude Code Worker.
 
-```bash
-python scripts/run_experiment.py --config examples/arbor.yaml
+## Search and selection
+
+1. Evaluate the initial Snapshot once on full train and full dev. Create `ROOT` with the initial scores and version; initialize the selected trunk from that Snapshot.
+2. Ask the Coordinator to expand directions, dispatch a pending experiment leaf, prune a subtree, or stop. It sees the tree, current trunk's file names and component rules, current train traces, and saved train/dev scores.
+3. Dispatch a hypothesis to the Executor in a checkout of the **current trunk**. The conceptual parent might be a rejected experiment or belong to a different line of inquiry; its Snapshot is not automatically checked out. Record the actual editing base as `base_snapshot_id`.
+4. Clean runtime artifacts and commit. Invalid resource changes or no changed files produce `needs_retry`, with no candidate evaluation. There is no separate framework compile/diff-review gate before train evaluation in this algorithm.
+5. Evaluate a changed candidate on full train. Any non-finished trajectory prevents adoption. Otherwise, compare its mean with the saved train mean of the current trunk. If the gain reaches `merge_threshold`, evaluate full dev.
+6. Adopt only if all dev trajectories finish and dev mean strictly exceeds the saved trunk dev score. Update the internal trunk and its saved train/dev evidence together. A train gate failure or a dev tie/regression retains the trunk.
+7. Reflect on the experiment, including unsuccessful edits and regressions. Synthesize lessons into each ancestor, bottom-up, using its children that have insights. Save the tree and current trunk, then plan the next experiment.
+8. At the cycle limit or Coordinator stop, promote the last selected trunk. There is no separate final archive ranking or remeasurement of all candidates. With no adoption, the seed remains selected.
+
+The adoption rule is:
+
+```text
+all candidate train trajectories finished
+and candidate_train - trunk_train >= merge_threshold
+and all candidate dev trajectories finished
+and candidate_dev > trunk_dev
 ```
 
-| 参数 | 默认值 | 含义 |
+`merge_threshold` is an absolute train-score difference in the primary metric's units, not a relative percentage or a dev threshold. At the default zero, a train tie can reach dev, but a dev tie never replaces the trunk. These comparisons have no additional numerical tolerance. Unchanged trunks are not re-evaluated each cycle, so the reference is their saved measurement.
+
+## Tree actions and statuses
+
+The Coordinator returns one JSON object in `<ARBOR>...</ARBOR>`. The available actions are:
+
+| Action | Conditions and effect |
+| --- | --- |
+| `expand` | Add 1–3 nonempty hypotheses under `root`, `direction`, `done`, or `merged` nodes below `max_depth`. |
+| `run` | Dispatch a `pending` leaf at depth at least 2. |
+| `prune` | Mark a non-root node and all descendants `pruned`; retain their records and lessons. |
+| `stop` | End search and keep the selected trunk. |
+
+ROOT has depth 0, directions depth 1, and executable hypotheses start at depth 2. IDs follow creation order (`1`, `1.1`, etc.). A successful expansion does not itself spend an experiment cycle. Each dispatch/stop decision allows at most 12 Coordinator calls, including expansions, pruning, and malformed actions; exhausting them raises an error rather than silently dispatching an experiment.
+
+| Status | Meaning |
+| --- | --- |
+| `root` / `direction` | Planning nodes rather than executable hypotheses. |
+| `pending` | An experiment not yet dispatched. |
+| `running` | The experiment is being implemented. |
+| `done` | A scored experiment that was not adopted, including train-screened or dev-rejected candidates. |
+| `merged` | The candidate was adopted at that time; later experiments may replace it. |
+| `needs_retry` | Empty/invalid edit or non-finished candidate evaluation. No automatic retry is implemented. |
+| `pruned` | Removed from further eligible planning/execution, while evidence remains. |
+
+`needs_retry` nodes cannot currently be dispatched or expanded again: those actions require other statuses. The Coordinator can create an alternative hypothesis elsewhere. Pruning a node does not roll back a previously adopted trunk or delete its Snapshot; conceptual pruning and resource selection are separate operations.
+
+## Evidence and insight propagation
+
+The Executor sees the selected experiment, serialized tree and inherited insights, component rules, and actual trunk files. The prompt asks it to implement reusable mechanisms while keeping models, credentials and evaluation data fixed. It returns a prose account; the edited files determine the candidate.
+
+Reflection sees the experiment record and candidate train trajectories, when available. It may see a measured dev score in the record, but raw dev trajectories are not passed into reflection. A null dev score means that stage was not evaluated; it is not a zero score. An invalid edit yields an empty trajectory-evidence list plus its rejection reason.
+
+For an experiment at depth d, synthesis makes one Worker call for each of its d ancestors, through ROOT. Each call reads all immediate children with nonempty insights, including retained lessons from rejected or pruned experiments. This updates textual lessons, not numeric scores or selection probabilities. There is no UCB formula or numerical tree-backup rule in the implementation; the Coordinator makes planning choices through its prompt.
+
+Each serialized evidence block is capped by `max_evidence_chars` and marked when truncated. Full tree/evaluation records are still saved, but the Worker is not guaranteed to see every historical row in every prompt. Reflection and synthesis prompts request fewer than 200 words; the algorithm does not mechanically enforce that word limit. ROOT's stored Snapshot/scores describe the initial version; the separate current-trunk record supplies the updated selection state.
+
+## Parameters and cost
+
+Defaults belong under `algorithm`.
+
+| Field | Default | Meaning |
 | --- | --- | --- |
-| `max_cycles` | 10 | 最多派发多少次实验；非法编辑或无改动也消耗一次 |
-| `max_depth` | 3 | 假设树最大深度，ROOT 为 0，方向为 1，实验从 2 开始 |
-| `merge_threshold` | 0.0 | 进入 dev 检查所需的 train 最小增益，使用主指标本身的单位 |
-| `max_evidence_chars` | 30000 | 每段 JSON 提示证据的字符上限，超出后明确标记截断 |
+| `max_cycles` | `10` | Maximum dispatched experiments; integer, at least 1. Invalid or empty edits also consume one. |
+| `max_depth` | `3` | Maximum hypothesis depth; integer, at least 2, with ROOT at 0. |
+| `merge_threshold` | `0.0` | Nonnegative minimum train gain required to reach dev evaluation. |
+| `max_evidence_chars` | `30000` | Character limit per serialized prompt-evidence block; integer, at least 1. |
 
-每次派发前最多允许 12 次 Coordinator 动作，防止只扩展、剪枝或反复返回非法计划而
-无限调用 Worker；超过后明确报错。每次扩展允许 1–3 个子假设。
-Worker 调用失败直接中止；非法编辑记录为 `needs_retry`，当前不恢复旧 checkout 或自动重试。
-Coordinator 可提出新的替代假设。`done` 只表示得到实验结果，不代表候选被采纳。
+For N train tasks, M dev tasks, K test tasks and C = `max_cycles`, Target task executions are at most `(C + 1) * (N + M) + K`: one baseline train/dev evaluation, at most one candidate train/dev evaluation per experiment, then final test. Invalid edits skip both candidate evaluations; failed train execution or insufficient train gain skips dev. These are task executions, not API requests or native tool turns.
 
-设 train/dev/test 题量分别为 N/M/K、实验预算为 C，目标任务执行次数最多为
-`(C + 1) * (N + M) + K`；Worker 的规划、编辑和经验综合调用另计。
-每轮不会重新评估未变的 trunk。算法要求 train、dev 非空，三个集合的 task ID 唯一且互不重叠。
+Each dispatched experiment calls the Worker once for editing, once for reflection, and d times for ancestor synthesis, plus up to 12 planning calls before dispatch. A stop decision also uses planning calls. The maximum depth therefore affects Worker cost even when the experiment budget is unchanged.
 
-## 与原版的边界
+Worker failures and evaluation exceptions propagate. Returned non-finished candidate trajectories are recorded as `needs_retry`; they do not automatically stop later planning. There is no framework resume of an old checkout, automatic experiment retry, or hidden repair budget.
 
-- 原版使用 B_dev 做 Executor 迭代，合并时可访问 B_test。这里分别映射为 train 和 dev，
-  正式 test 保留到最终选定版本后；同分不更新符合 FlashRSI 的既有协议。
-- 原版 worktree / Git 合并映射为 Snapshot checkout / 提升，保持“新实验从当前 trunk 出发”。
-  不实现真实分支合并冲突处理、恢复 Executor、并行派发或论文完整运行协议。
-- Coordinator 用序列化的树、资源路径和有界轨迹反馈规划；Executor 可直接读取编辑目录。
-  完整框架轨迹仍落盘，但本版没有原版任意工具调度、文献搜索、跨实验持久经验或交互审批。
-- tree 记录属于算法私有状态，不进入目标 Snapshot。每轮 `arbor-tree` 和最后的 promote
-  记录包含节点、分数、版本引用和 insight；Worker 轨迹由基类自动记录和脱敏。
+## Records and adaptation
+
+`arbor-plan` saves expansions/pruning and the tree; `arbor-plan-rejected` saves invalid-action feedback; `arbor-stop` records early stopping. After each experiment and insight propagation, `arbor-tree` records the cycle, `trunk_id`, and nodes. Final `promote` records the selected Snapshot, dev score, and tree. Worker trajectories are recorded by the shared framework.
+
+A node's `parent_id` is its hypothesis parent; `base_snapshot_id` is the actual resource version edited; `snapshot_id` is the produced candidate. These differ from Snapshot's resource lineage. Tree state is algorithm metadata and is not embedded in the evolving harness resources.
+
+The [implementation](../flashrsi/algorithms/arbor/__init__.py) pins [RUC-NLPIR/Arbor](https://github.com/RUC-NLPIR/Arbor/tree/7cdaf1fa6d779b3d5e340052357bf3fe55dfed93) commit `7cdaf1fa6d779b3d5e340052357bf3fe55dfed93`, referencing Coordinator tree/prompts and executor/tree/Git tools.
+
+- Upstream's Executor iteration and merge-evaluation signals (`B_dev` and `B_test`) map to train and dev here. FlashRSI test remains sealed until final selection; local adoption requires strict dev improvement.
+- Snapshot checkouts and selection replace worktrees and Git merging. A local `merged` status means adoption, not a three-way Git merge or automatic conflict resolution.
+- Experiments run sequentially from the current trunk. Executor continuation, parallel dispatch, cross-run persistent experience, arbitrary Coordinator tools, literature search, and interactive approvals are not implemented.
+- Upstream's standalone CLI, MCP service, dashboard, and benchmark collection are outside this algorithm port. The local framework owns execution, scoring, resources, and records; no harness- or benchmark-specific branches are used in the algorithm.

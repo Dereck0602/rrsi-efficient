@@ -24,8 +24,8 @@ These methods edit a broader resource scope. Start from their own configurations
 | DarwinX | Repeated train screening/confirmation; preservation gates and complementary recombination. | [Guide](../darwinx.md) · [中文](../darwinx.zh-CN.md) · [YAML](../../examples/darwinx.yaml) |
 | Meta-Harness | File-based history of code, scores, and traces. | [Guide](../meta-harness.md) · [中文](../meta-harness.zh-CN.md) · [YAML](../../examples/meta_harness.yaml) |
 | ModularRSI | Independent module branches and integration, admitted by review/execution gates rather than score gains. | [Guide](../modular-rsi.md) · [中文](../modular-rsi.zh-CN.md) · [YAML](../../examples/modular_rsi.yaml) |
-| RRSI | History-guided revisions with score/cost admission. | [RRSI guide](../rrsi.md) · [YAML](../../examples/rrsi.yaml) |
-| Arbor | Hypothesis-tree expansion, experiment selection, and upward insight synthesis. | [Arbor guide](../arbor.md) · [YAML](../../examples/arbor.yaml) |
+| RRSI | History-guided revisions with score/cost admission; returns the last accepted version. | [Guide](../rrsi.md) · [中文](../rrsi.zh-CN.md) · [YAML](../../examples/rrsi.yaml) |
+| Arbor | Hypothesis-tree planning; experiments start from the selected trunk and require strict dev gains for adoption. | [Guide](../arbor.md) · [中文](../arbor.zh-CN.md) · [YAML](../../examples/arbor.yaml) |
 
 ## Match the Worker to the method
 

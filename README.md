@@ -242,6 +242,10 @@ For preservation-constrained branch search, see [DarwinX](docs/darwinx.md): repe
 
 For independent module evolution and integration, see [ModularRSI](docs/modular-rsi.md), including native file mappings, contrastive diagnosis, execution gates, and final fallback rules.
 
+For history-guided search with token-cost constraints, see [RRSI](docs/rrsi.md): noise calibration, mechanism budgets, candidate admission, and round-winner selection.
+
+For hypothesis-tree planning, see [Arbor](docs/arbor.md): trunk-based experiments, train/dev adoption gates, and upward lesson synthesis.
+
 ### Overall results
 
 The table below reports source-task performance and frozen transfer performance for the twelve
