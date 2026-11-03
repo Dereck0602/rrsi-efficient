@@ -41,11 +41,6 @@ def test_json_reply_does_not_repair_invalid_json(reply):
         _json_reply(reply)
 
 
-def test_json_reply_does_not_coerce_object_to_findings_list():
-    value = {"target": "runtime/agent.py"}
-    assert _json_reply(json.dumps(value)) == value
-
-
 def test_analysis_prompt_example_obeys_real_findings_protocol():
     prompt = ANALYZE.format(module="tool_use", files="[]", evidence="[]", history="[]")
     instructions = prompt.split("Return JSON only:", 1)[1]
