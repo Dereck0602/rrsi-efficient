@@ -7,19 +7,16 @@ import importlib.util
 import json
 import os
 import queue
-import shlex
 import shutil
 import subprocess
 import sys
 import threading
 from dataclasses import replace
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from secrets import token_urlsafe
 from tempfile import TemporaryDirectory
 
-from flashrsi._records import _redact
 from flashrsi.benchmarks.workbench import DATABASE_FILES, REVISION
+from flashrsi.integrations import _web_tools
 
 
 class _Session:
@@ -83,71 +80,12 @@ class _Session:
         self.process.stdout.close()
 
 
-def _serve(session, token, records):
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            if (
-                self.path != "/"
-                or self.headers.get("Authorization") != "Bearer " + token
-            ):
-                self.send_error(403)
-                return
-            value = {}
-            try:
-                size = int(self.headers.get("Content-Length", 0))
-                if not 0 < size <= 65536:
-                    raise ValueError("Invalid WorkBench request size")
-                value = json.loads(self.rfile.read(size))
-                # The target can only call tools. Grading is never a bridge API.
-                result = session.request(
-                    {
-                        "operation": "call",
-                        "name": value["name"],
-                        "arguments": value["arguments"],
-                    }
-                )
-            except Exception as exc:
-                result = {"error": f"WorkBench tool failed ({type(exc).__name__})"}
-            records.append(
-                {"type": "WorkBenchTool", "request": value, "response": result}
-            )
-            body = json.dumps(result, ensure_ascii=True).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *_):
-            pass
-
-    # Upstream state is thread-local: requests must stay on this server thread,
-    # and the native state itself always stays on the child process's main thread.
-    return HTTPServer(("127.0.0.1", 0), Handler)
-
-
 def bind(agent, benchmark):
     if sys.version_info < (3, 12):
         raise ValueError("Pinned WorkBench requires Python >=3.12")
     if any(importlib.util.find_spec(m) is None for m in ("pandas", "numpy")):
         raise ValueError("Install flashrsi-lite[all]")
-    if (
-        agent.name == "miniagent"
-        and os.name != "posix"
-        and not agent.config.get("source_dir")
-    ):
-        raise ValueError(
-            "WorkBench with bundled MiniAgent requires POSIX; use Claude Code or a compatible source_dir"
-        )
-    if (
-        agent.name == "claude_code"
-        and agent.config.get("permission_mode") != "bypassPermissions"
-        and not any(
-            t == "Bash" or t.startswith("Bash(")
-            for t in agent.config.get("allowed_tools", ["Read", "Glob", "Grep"])
-        )
-    ):
-        raise ValueError("WorkBench requires Claude Code allowed_tools to include Bash")
+    _web_tools._check_target(agent, "WorkBench")
 
     async def run(target, task):
         if benchmark._tasks_by_id.get(task.task_id) != task:
@@ -158,49 +96,44 @@ def bind(agent, benchmark):
             for name in DATABASE_FILES
         ):
             raise ValueError("WorkBench native database changed after load")
-        token, records = token_urlsafe(32), []
-        with (
-            TemporaryDirectory(prefix="flashrsi-workbench-host-") as host,
-            TemporaryDirectory(prefix="flashrsi-workbench-task-") as work,
-        ):
+        records = []
+        with TemporaryDirectory(prefix="flashrsi-workbench-host-") as host:
             session = await asyncio.to_thread(
                 _Session, benchmark._upstream_root, benchmark._data_root, Path(host)
             )
-            server = _serve(session, token, records)
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
             result = None
             scores = {}
+
+            def respond(raw):
+                value = {}
+                try:
+                    value = json.loads(raw)
+                    if not isinstance(value, dict) or set(value) != {
+                        "name",
+                        "arguments",
+                    }:
+                        raise ValueError("Only native tool calls are accepted")
+                    response = session.request({"operation": "call", **value})
+                except Exception as exc:
+                    response = {
+                        "error": f"WorkBench tool failed ({type(exc).__name__})"
+                    }
+                records.append(
+                    {"type": "WorkBenchTool", "request": value, "response": response}
+                )
+                return response
+
             try:
-                client = Path(work) / "workbench.py"
-                shutil.copyfile(
-                    Path(__file__).with_name("_workbench_client.py"), client
-                )
-                command = shlex.join(
-                    [
-                        Path(sys.executable).as_posix(),
-                        "-X",
-                        "utf8",
-                        client.as_posix(),
-                        "--bridge",
-                        f"http://127.0.0.1:{server.server_port}/",
-                        "--token",
-                        token,
-                    ]
-                )
                 prompt = (
                     "Today's date is Thursday, 2023-11-30 and the current time is 00:00:00.\n"
                     + task.question
                     + "\n\nWorkBench tools (use your shell tool):\n"
-                    + command
-                    + " TOOL_NAME 'JSON_OBJECT_OF_STRING_KEYWORD_ARGUMENTS'\n\n"
+                    + _web_tools._command(120)
+                    + " call TOOL_NAME 'JSON_OBJECT_OF_STRING_KEYWORD_ARGUMENTS'\n\n"
                     + session.description
                 )
-                result = await target.run(prompt, working_dir=Path(work))
+                result = await _web_tools._run_with_relay(target, prompt, respond)
             finally:
-                await asyncio.to_thread(server.shutdown)
-                server.server_close()
-                thread.join(timeout=2)
                 # No target requests can race the final host-only scorer.
                 try:
                     if result is not None and result.status == "finished":
@@ -247,12 +180,6 @@ def bind(agent, benchmark):
                             "metrics": scores["metrics"],
                         },
                     )
-            return replace(
-                result,
-                messages=_redact(messages, [token]),
-                output=_redact(result.output, [token]),
-                usage=_redact(result.usage, [token]),
-                error_message=_redact(result.error_message, [token]),
-            )
+            return replace(result, messages=messages)
 
     agent._env_runner = run

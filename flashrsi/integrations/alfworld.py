@@ -5,20 +5,16 @@ import hashlib
 import json
 import os
 import queue
-import shlex
-import shutil
 import subprocess
 import sys
 import threading
 from dataclasses import replace
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from secrets import token_urlsafe
 from tempfile import TemporaryDirectory
 
-from flashrsi._records import _redact
 from flashrsi.benchmarks.alfworld import TEXTWORLD_VERSION, VERSION
+from flashrsi.integrations import _web_tools
 
 
 class _Session:
@@ -83,52 +79,6 @@ class _Session:
         self.process.stdout.close()
 
 
-def _serve(session, token, records):
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self):
-            self.connection.settimeout(120)
-            try:
-                size = int(self.headers.get("Content-Length", 0))
-                if not 0 < size <= 65536:
-                    raise ValueError("Invalid request size")
-                # Drain bounded request bodies before closing rejected requests;
-                # unread bytes can reset the connection before the 403 arrives.
-                body = self.rfile.read(size)
-            except (ValueError, OSError):
-                self.send_error(400)
-                return
-            if (
-                self.path != "/"
-                or self.headers.get("Authorization") != "Bearer " + token
-            ):
-                self.send_error(403)
-                return
-            action = None
-            try:
-                value = json.loads(body)
-                # The target cannot reset, grade, or select a different game.
-                if not isinstance(value, dict) or set(value) != {"action"}:
-                    raise ValueError("Only action is accepted")
-                action = value["action"]
-                result = session.request({"operation": "step", "action": action})
-            except Exception as exc:
-                result = {"error": f"ALFWorld action failed ({type(exc).__name__})"}
-            records.append(
-                {"type": "ALFWorldStep", "action": action, "response": result}
-            )
-            body = json.dumps(result, ensure_ascii=True).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *_):
-            pass
-
-    return HTTPServer(("127.0.0.1", 0), Handler)
-
-
 def _check_runtime():
     if os.name != "posix" or not (3, 11) <= sys.version_info < (3, 13):
         raise ValueError(
@@ -147,15 +97,7 @@ def _check_runtime():
 
 def bind(agent, benchmark):
     _check_runtime()
-    if (
-        agent.name == "claude_code"
-        and agent.config.get("permission_mode") != "bypassPermissions"
-        and not any(
-            t == "Bash" or t.startswith("Bash(")
-            for t in agent.config.get("allowed_tools", ["Read", "Glob", "Grep"])
-        )
-    ):
-        raise ValueError("ALFWorld requires Claude Code allowed_tools to include Bash")
+    _web_tools._check_target(agent, "ALFWorld")
 
     async def run(target, task):
         if benchmark._tasks_by_id.get(task.task_id) != task:
@@ -164,11 +106,8 @@ def bind(agent, benchmark):
         game_bytes = game.read_bytes()
         if hashlib.sha256(game_bytes).hexdigest() != checksum:
             raise ValueError("ALFWorld native game changed after load")
-        token, records = token_urlsafe(32), []
-        with (
-            TemporaryDirectory(prefix="flashrsi-alfworld-host-") as host,
-            TemporaryDirectory(prefix="flashrsi-alfworld-task-") as work,
-        ):
+        records = []
+        with TemporaryDirectory(prefix="flashrsi-alfworld-host-") as host:
             gamefile = Path(host) / "game.tw-pddl"
             gamefile.write_bytes(game_bytes)
             setup = {
@@ -178,42 +117,41 @@ def bind(agent, benchmark):
                 "admissible_commands": benchmark.admissible_commands,
             }
             session = await asyncio.to_thread(_Session, setup, host)
-            server = None
             result, score = None, {}
-            try:
-                server = _serve(session, token, records)
-                thread = threading.Thread(target=server.serve_forever, daemon=True)
-                thread.start()
-                client = Path(work) / "alfworld.py"
-                shutil.copyfile(Path(__file__).with_name("_alfworld_client.py"), client)
-                command = shlex.join(
-                    [
-                        Path(sys.executable).as_posix(),
-                        "-X",
-                        "utf8",
-                        client.as_posix(),
-                        "--bridge",
-                        f"http://127.0.0.1:{server.server_port}/",
-                        "--token=" + token,
-                    ]
+
+            def respond(raw):
+                action = None
+                try:
+                    value = json.loads(raw)
+                    if not isinstance(value, dict) or set(value) != {"action"}:
+                        raise ValueError("Only action is accepted")
+                    action = value["action"]
+                    if not isinstance(action, str):
+                        raise ValueError("Action must be a string")
+                    response = session.request({"operation": "step", "action": action})
+                except Exception as exc:
+                    response = {
+                        "error": f"ALFWorld action failed ({type(exc).__name__})"
+                    }
+                records.append(
+                    {"type": "ALFWorldStep", "action": action, "response": response}
                 )
+                return response
+
+            try:
                 prompt = (
                     task.question
                     + "\n\nInitial environment observation:\n"
                     + json.dumps(session.initial, ensure_ascii=False)
                     + "\n\nUse your shell tool to submit one environment action:\n"
-                    + command
-                    + " 'ACTION'\n"
+                    + _web_tools._command(120)
+                    + " step 'ACTION'\n"
                     + f"At most {benchmark.max_steps} environment steps. "
                     "Use the native text commands (e.g. look, inventory, help). "
                     "Stop when done is true. Your final text does not change the environment."
                 )
-                result = await target.run(prompt, working_dir=Path(work))
+                result = await _web_tools._run_with_relay(target, prompt, respond)
             finally:
-                if server is not None:
-                    await asyncio.to_thread(server.shutdown)
-                    server.server_close()
-                    thread.join(timeout=2)
                 try:
                     if result is not None and result.status == "finished":
                         if session.error:
@@ -252,12 +190,6 @@ def bind(agent, benchmark):
                             **score,
                         },
                     )
-            return replace(
-                result,
-                messages=_redact(messages, [token]),
-                output=_redact(result.output, [token]),
-                usage=_redact(result.usage, [token]),
-                error_message=_redact(result.error_message, [token]),
-            )
+            return replace(result, messages=messages)
 
     agent._env_runner = run

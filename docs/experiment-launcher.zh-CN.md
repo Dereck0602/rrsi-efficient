@@ -143,21 +143,21 @@ python scripts/run_experiment.py --config experiment.local.yaml --cache-dir D:\F
 | `bbeh`、`supergpqa` | 固定版本公开数据，本地确定性评分 | Docker Linux daemon；显式划分实验 train/dev/test；BBEH 示例显式排除重复题组，SuperGPQA 使用答案字母协议，详见[轻量基准接入](lightweight-benchmarks.md) |
 | `aime` | AIME 2025/2026 数学题 | Docker Linux daemon；整数精确评分；详见[AIME 接入与历史记录](coding-math-benchmarks.md) |
 | `twowiki_multihopqa` | 固定版本 HF 镜像的 train/validation；也支持本地原始 JSON | Docker Linux daemon；仅 context + answer_text（答案 EM/F1），不含 v1.1 别名、证据链或联合评分；显式划分实验 train/dev/test |
-| `searchqa`、`hotpotqa`、`musique`、`triviaqa`、`nq` | 固定来源的原生 QA 数据 | context 模式需要 Docker Linux daemon，容器须能访问模型端点；HotpotQA `fullwiki` 模式需部署检索服务并配置 `benchmark.retrieval` |
+| `searchqa`、`hotpotqa`、`musique`、`triviaqa`、`nq` | 固定来源的原生 QA 数据 | 需要 Docker Linux daemon，容器须能访问模型端点；HotpotQA `fullwiki` 模式另需部署检索服务并配置 `benchmark.retrieval` |
 | `math` | 原生数据、数学评分依赖 | Docker Linux daemon；原生答案须通过评分器校验；异常记录会明确报错 |
-| `hle`、`livemathbench` | 原生数据、Judge 依赖 | 上游要求授权时提供获批的 `HF_TOKEN`，或使用本地数据；配置独立 Judge |
-| `officeqa_pro` | 原生题目下载/本地加载 | 有权访问的数据及 `benchmark.corpus_path` 文档语料 |
-| `alfworld` | 固定纯文本运行依赖；任务只从本地加载 | Linux/WSL/macOS、Python 3.11/3.12、原生 `benchmark.data_path`；无需 Docker/Judge，见 [接入说明](alfworld.md) |
-| `workbench` | 固定版本原生数据库、v2 任务和状态评分，自动准备依赖 | Python ≥3.12、Git，无需 Docker/Judge；显式实验划分，见 [接入说明](workbench.md) |
-| `travelplanner` | 原生数据、参考数据库、执行依赖 | 独立 `benchmark.postprocess.llm` |
-| `harvey_lab` | 固定 LAB 依赖、原生数据、Pandoc 二进制 | Python 3.12–3.13、Git、独立 Anthropic/OpenAI Judge；默认 MiniAgent shell 需 POSIX 环境 |
-| `browsecomp`、`deepsearchqa`、`widesearch` | 原生数据、各自评分依赖 | 搜索/网页服务及独立 Judge；DeepSearchQA 使用原生指定 Judge 模型 |
-| `swe_bench` | 原生数据、SWE-bench harness；任务镜像交给原生运行时准备 | Git、可用的 Docker Linux daemon |
+| `hle`、`livemathbench` | 原生数据、Docker、Judge 依赖 | 上游要求授权时提供获批的 `HF_TOKEN`，或使用本地数据；配置独立 Judge |
+| `officeqa_pro` | 原生题目下载/本地加载 | Docker、有权访问的数据及 `benchmark.corpus_path` 文档语料 |
+| `alfworld` | 固定纯文本运行依赖；任务只从本地加载 | Linux/WSL/macOS、Python 3.11/3.12、Docker、原生 `benchmark.data_path`，见 [接入说明](alfworld.md) |
+| `workbench` | 固定版本原生数据库、v2 任务和状态评分，自动准备依赖 | Python ≥3.12、Git、Docker；显式实验划分，见 [接入说明](workbench.md) |
+| `travelplanner` | 原生数据、参考数据库、Docker、执行依赖 | 独立 `benchmark.postprocess.llm` |
+| `harvey_lab` | 固定 LAB 依赖、原生数据、Pandoc 二进制 | Python 3.12–3.13、Git、Docker、独立 Anthropic/OpenAI Judge |
+| `browsecomp`、`deepsearchqa`、`widesearch` | 原生数据、各自评分依赖 | Docker、搜索/网页服务及独立 Judge；DeepSearchQA 使用原生指定 Judge 模型 |
+| `swe_bench` | 原生数据、SWE-bench harness；任务镜像交给原生运行时准备 | Git、可用的 Docker Linux daemon、显式 `agent.llm.base_url` |
 | `swe_bench_pro`、`terminal_bench`、`deepswe`、`jobbench`、`spreadsheetbench2` | Harbor 依赖及原生数据；任务镜像交给原生运行时准备 | Python ≥3.12、Docker Linux daemon + Compose、Git；JobBench 另需独立 `benchmark.judge.llm` |
 | `appworld` | 构建默认运行镜像、下载并缓存原生数据 | Docker Linux daemon |
 | `bfcl` | 构建默认运行镜像、获取固定版本原生数据 | Docker Linux daemon、自动获取数据需 Git |
-| `tau2` | 固定版本 τ² 文本任务：airline、retail、telecom；原生模拟器、工具与评分 | Python 3.12–3.13、Git、独立用户模拟器；retail 另需 Judge，无需 Docker；见 [τ² 接入说明](tau2-bench.md) |
-| `tau3_banking` | 固定版本 tau2、原生银行任务和用户模拟器资源 | Git、独立 `benchmark.user_simulator.llm`；硬超时需 POSIX |
+| `tau2` | 固定版本 τ² 文本任务：airline、retail、telecom；原生模拟器、工具与评分 | Python 3.12–3.13、Git、Docker、独立用户模拟器；retail 另需 Judge；见 [τ² 接入说明](tau2-bench.md) |
+| `tau3_banking` | 固定版本 tau2、原生银行任务和用户模拟器资源 | Git、Docker、独立 `benchmark.user_simulator.llm`；硬超时需 POSIX |
 
 Terminal 2.1、SWE-bench Verified / Pro 和 SpreadsheetBench 2 的版本、分类与示例见
 [Coding 与 Working 接入说明](coding-working-benchmarks.md)。DeepSWE v1.1 的接口与配置见[接入说明](deepswe.md)。CRUXEval-O 已移除，旧 smoke 仅作历史记录。
@@ -197,7 +197,7 @@ train/dev/test 路径映射。HotpotQA 示例从有标签的原生 train/validat
 每个前缀可接 `MODEL`、`API_KEY`、`BASE_URL`，例如 `FLASHRSI_WORKER_API_KEY`。
 纯 LLM Worker 使用 Chat Completions；MiniAgent 对 `gpt-`、`o1`、`o3`、`o4` 开头的模型
 使用 Responses API，其他模型使用 Chat Completions，提供商应支持对应接口。
-OpenAI 官方接口的 `base_url` 可留空。
+OpenAI 官方接口的 `base_url` 通常可留空。采用模型专用网络的 Target（给定上下文任务、τ、SWE-bench 等）须显式填模型端点。
 
 默认缓存位于 Windows `%LOCALAPPDATA%\FlashRSI` 或 Linux/macOS
 `${XDG_CACHE_HOME:-~/.cache}/FlashRSI`。依赖按组合隔离，避免 tau2 与 Harbor 的依赖冲突；

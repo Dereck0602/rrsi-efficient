@@ -31,7 +31,9 @@ train/test 角色，须明确配置实验划分；适配器不会自动把变体
 
 ## 运行
 
-使用 Python 3.12 或 3.13，准备 Git。无需 Docker、GPU 或外部业务服务。
+使用 Python 3.12 或 3.13，准备 Git 和 Linux Docker daemon。每个 Target 回合只将公开策略、工具说明及对话传入独立容器。原生领域数据库、用户模拟器和评分留在宿主机。
+
+请显式配置 `agent.llm.base_url`。依赖安装结束后，Target 容器会断开默认网络，只通过专用代理访问配置的模型来源（协议、主机和端口）。`agent.llm.side_base_url` 如有配置，也会加入允许列表。解题中的任意公网请求会失败，官方原生工具及其宿主侧服务仍可运行。
 统一入口为 τ² 建立包含 `all` extra 的独立依赖环境，并从固定 commit 安装上游 tau2-bench，
 避免其 LiteLLM 版本与 Harbor 冲突。
 

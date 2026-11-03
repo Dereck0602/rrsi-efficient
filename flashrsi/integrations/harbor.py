@@ -22,6 +22,10 @@ try:
     from harbor.agents.base import BaseAgent
     from harbor.agents.installed.base import NonZeroAgentExitCodeError
     from harbor.models.task.task import Task as HarborTask
+    from harbor.models.task.verifier_mode import (
+        VerifierEnvironmentMode,
+        resolve_task_verifier_mode,
+    )
     from harbor.models.trial.config import (
         AgentConfig,
         EnvironmentConfig,
@@ -29,6 +33,8 @@ try:
         TrialConfig,
         VerifierConfig,
     )
+    from harbor.models.trial.paths import EnvironmentPaths
+    from harbor.trial.hooks import TrialEvent
     from harbor.trial.trial import Trial
 except ImportError as exc:
     raise ImportError("Install flashrsi-lite[harbor] for environment tasks") from exc
@@ -83,6 +89,10 @@ async def _run(agent, task, *, verifier_env=None, agent_allowed_hosts=None):
     remote_docker = options.get("remote_docker", False)
     if not isinstance(remote_docker, bool):
         raise ValueError("harbor.remote_docker must be a boolean")
+    shared_verifier = (
+        resolve_task_verifier_mode(native.config) == VerifierEnvironmentMode.SHARED
+    )
+    environment_import = _docker_environment_import(native, remote_docker)
     install_source = options.get("uv_install_source", "astral")
     installers = {
         "astral": "https://astral.sh/uv/0.11.4/install.sh",
@@ -109,6 +119,8 @@ async def _run(agent, task, *, verifier_env=None, agent_allowed_hosts=None):
     trajectory = Trajectory(messages=(record,))
     event = {
         "type": "HarborVerifier",
+        "verifier_environment_mode": "shared" if shared_verifier else "separate",
+        "host_log_transport": "copy" if environment_import else "mount",
         "task_id": task.task_id,
         "task_checksum": checksum,
         "snapshot_id": snapshot.id,
@@ -144,15 +156,17 @@ async def _run(agent, task, *, verifier_env=None, agent_allowed_hosts=None):
                         type="docker",
                         delete=True,
                         env=_plain(options.get("environment_env", {})),
-                        import_path=(
-                            "flashrsi.integrations._harbor_remote:_RemoteDockerEnvironment"
-                            if remote_docker
-                            else None
-                        ),
+                        import_path=environment_import,
                     ),
                     verifier=VerifierConfig(env=verifier_env or {}),
                 )
             )
+            if shared_verifier:
+
+                async def prepare_verifier(_event):
+                    await _prepare_shared_verifier(trial.agent_environment)
+
+                trial.add_hook(TrialEvent.VERIFICATION_START, prepare_verifier)
             # Harbor owns environment setup, phase deadlines, verifier and cleanup.
             result = await trial.run()
             output = trial.paths.agent_dir / "flashrsi.json"
@@ -257,6 +271,30 @@ async def _run(agent, task, *, verifier_env=None, agent_allowed_hosts=None):
         )
 
 
+def _docker_environment_import(native, remote_docker=False):
+    shared = resolve_task_verifier_mode(native.config) == VerifierEnvironmentMode.SHARED
+    if remote_docker or (
+        not (native.paths.environment_dir / "docker-compose.yaml").exists()
+        and (shared or not (native.paths.tests_dir / "docker-compose.yaml").exists())
+    ):
+        return "flashrsi.integrations._harbor_remote:_RemoteDockerEnvironment"
+    return None
+
+
+async def _prepare_shared_verifier(environment):
+    """Reset reserved scoring paths before Harbor uploads the native tests."""
+    paths = EnvironmentPaths.for_os(environment.os)
+    result = await environment.exec("test ! -L /logs", user="root")
+    if result.return_code:
+        raise RuntimeError(
+            "Refusing a linked Harbor logs directory before verification"
+        )
+    for path, chmod in ((paths.verifier_dir, True), (paths.tests_dir, False)):
+        result = await environment.empty_dirs([path], chmod=chmod)
+        if result is None or result.return_code:
+            raise RuntimeError("Cannot clear Harbor verifier inputs and rewards")
+
+
 def _positive(value, field):
     if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
         raise ValueError(f"agent.{field} must be a positive finite number")
@@ -296,6 +334,12 @@ def _archive_trial(trial, directory, metadata, secrets):
                 destination = saved / relative
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 data = path.read_bytes()
+                if path.name == "model.patch" and any(
+                    secret.encode() in data for secret in secrets
+                ):
+                    raise ValueError(
+                        "Refusing to archive a patch containing configured credentials"
+                    )
                 # Deliverables (including patches) must remain reproducible.
                 # Redact native logs, not the files that the verifier evaluated.
                 if source != trial.paths.artifacts_dir and path.name != "model.patch":

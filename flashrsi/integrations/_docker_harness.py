@@ -9,7 +9,9 @@ from flashrsi.core import Trajectory
 from flashrsi.integrations._container_payload import _ROOT, _setup_script
 
 
-async def _setup(docker, name, network, payload, config, timeout):
+async def _setup(
+    docker, name, network, payload, config, timeout, *, drop_net_raw=False
+):
     installers = {
         "astral": "https://astral.sh/uv/0.11.4/install.sh",
         "github": "https://github.com/astral-sh/uv/releases/download/0.11.4/uv-installer.sh",
@@ -25,6 +27,7 @@ async def _setup(docker, name, network, payload, config, timeout):
         name,
         "--init",
         "--security-opt=no-new-privileges",
+        *(["--cap-drop=NET_RAW"] if drop_net_raw else []),
         "--pids-limit=512",
         "--memory=2g",
         "--workdir",
@@ -52,7 +55,7 @@ async def _setup(docker, name, network, payload, config, timeout):
     )
 
 
-async def _run(docker, name, timeout, grace):
+async def _run(docker, name, timeout, grace, *, env=None):
     command = shlex.join(
         [
             f"{_ROOT}/venv/bin/python",
@@ -66,6 +69,11 @@ async def _run(docker, name, timeout, grace):
     )
     result = await docker(
         "exec",
+        *(
+            argument
+            for key, value in (env or {}).items()
+            for argument in ("--env", f"{key}={value}")
+        ),
         "--workdir",
         "/task",
         name,

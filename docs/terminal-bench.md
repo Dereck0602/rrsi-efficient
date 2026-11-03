@@ -36,5 +36,8 @@ Code Mode 模型另需容器内可用的 Node.js，见 [Codex 指南](codex.md)�
 运行前应确认模型协议、镜像拉取与预算。普通 `flashrsi run` 不执行一键脚本的依赖安装流程。
 
 Harbor 负责 trial 的环境生命周期和原生评分；框架保留 Snapshot、轨迹、分数和日志。
+单服务任务使用复制方式收集日志，Target 不挂载宿主日志目录；下载的链接和特殊文件会被拒绝。
+对使用共享评分环境的任务，Harbor 上传官方测试前会清空保留的 `/tests` 与 `/logs/verifier`，避免预写的 reward 混入原生结果。
+Terminal-Bench 2.0 沿用任务网络设置，普通依赖和文档访问仍可用；测试、参考答案与评测完整性规则保持原生。
 Harbor 已收集的交付文件和原生评分日志会在临时目录清理前保存到实验的
 `artifacts/harbor/trial-*/`，轨迹中记录对应路径；详细说明见[查看结果](experiment-launcher.zh-CN.md#查看结果)。

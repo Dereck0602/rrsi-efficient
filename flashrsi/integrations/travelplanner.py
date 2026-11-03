@@ -17,13 +17,18 @@ from flashrsi._records import _redact, _secrets
 from flashrsi._startup import _url
 from flashrsi.agents.miniagent import _stop
 from flashrsi.benchmarks.travelplanner import REVISION
-from flashrsi.integrations import _travelplanner_grade, _travelplanner_postprocess
+from flashrsi.integrations import (
+    _travelplanner_grade,
+    _travelplanner_postprocess,
+    supplied_context,
+)
 
 DATABASE_SOURCE = "osunlp/TravelPlannerEnvironment"
 DATABASE_REVISION = "f2183898e2b9547ed2a6f5356ae4cbc3f3431bf4"
 
 
 def bind(agent, benchmark):
+    supplied_context._check(agent)
     for module in ("openai", "pandas", "numpy", "requests"):
         if importlib.util.find_spec(module) is None:
             raise ValueError("Install flashrsi-lite[all]; see README.md")
@@ -104,8 +109,7 @@ def bind(agent, benchmark):
             raise ValueError("TravelPlanner requires a loaded benchmark Task")
         # Sole-planning supplies all reference information in the native prompt.
         # Hidden constraints and annotated plans never enter the task workspace.
-        with TemporaryDirectory(prefix="flashrsi-travelplanner-task-") as temporary:
-            result = await target.run(task.question, working_dir=Path(temporary))
+        result = await supplied_context._run_prompt(target, task.question)
         result = replace(
             result,
             messages=tuple(

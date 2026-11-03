@@ -7,7 +7,7 @@
 ## 数据与环境
 
 - Linux/WSL/macOS、Python 3.11 或 3.12；Windows 原生启动明确报错。
-- 使用原生 Python 文本环境，无需 Docker、Harbor、GPU 或独立 Judge。
+- 宿主机使用原生 Python 文本环境，Target 需要 Docker。
   TextWorld 编译依赖按[官方说明](https://github.com/microsoft/TextWorld#installation)准备。
 - 原生默认来源下 `benchmark.data_path` 必填，指向原始 `json_2.1.1` 或其父目录。
   YAML 路径相对配置文件，CLI 路径相对当前目录。不自动下载任何任务或视觉模型。
@@ -42,8 +42,7 @@ task_types:
 每次 rollout 创建独立子进程，通过原生 `textworld.gym.register_game` 与
 `AlfredDemangler(shuffle=False)` 加载指定游戏；沿用上游的观察、命令解释及状态转移。
 Agent 在自己的工作目录中通过 shell 客户端提交动作。支持 MiniAgent 与启用 Bash
-的 Claude Code；不改动两者的原生 system prompt。该本机会话桥接沿用 WorkBench
-的受信任本机执行模型，不提供容器级隔离。
+的 Claude Code；不改动两者的原生 system prompt。原生会话留在宿主机，Target 在每题独立的 Docker 容器内通过私有通道提交动作。游戏文件和评分接口留在宿主机。
 
 - `max_steps` 默认 50，是本适配的可配置预算，不宣称复现特定论文设置。
   环境动作预算与 `agent.max_turns`、`agent.timeout` 分别生效。
@@ -70,4 +69,4 @@ python scripts/run_experiment.py --config examples/alfworld_opro.yaml
 也不能替代真实环境 rollout。缺少数据时明确报错。
 
 当前验证覆盖合成游戏记录和模拟环境下的加载、划分、交互协议、失败传播、成功判定、
-HTTP 客户端与进程清理。官方任务、原生 ALFWorld 模拟器及真实模型的端到端运行尚未验证。
+动作客户端与进程清理。官方任务、原生 ALFWorld 模拟器及真实模型的端到端运行尚未验证。

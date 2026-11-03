@@ -18,7 +18,7 @@ from uuid import uuid4
 from flashrsi._records import _config_record, _redact, _secrets
 from flashrsi.benchmarks.swe_bench import _checksum
 from flashrsi.core import Trajectory
-from flashrsi.integrations import _swe_grade
+from flashrsi.integrations import _model_egress, _swe_grade
 from flashrsi.integrations._container import _agent_class
 from flashrsi.integrations._container_payload import _ROOT, _setup_script, _stage
 from flashrsi.integrations._docker import _docker
@@ -29,6 +29,7 @@ def bind(agent, benchmark=None):
     """Bind full evaluation with a Benchmark, or retain explicit patch collection."""
     agent._check_container()
     agent.snapshot
+    _model_egress._origins(agent.config)
     cls = type(agent)
     if _agent_class(f"{cls.__module__}:{cls.__qualname__}") is not cls:
         raise ValueError("SWE execution requires an importable Agent class")
@@ -77,6 +78,7 @@ async def _reset(name, base, timeout):
         "git clean -fd\ngit checkout --detach\n"
         "git for-each-ref --format='delete %(refname)' | git update-ref --stdin\n"
         "git config --local --remove-section remote.origin || true\n"
+        'rm -f -- "$(git rev-parse --git-path ORIG_HEAD)" "$(git rev-parse --git-path FETCH_HEAD)"\n'
         "git reflog expire --expire=now --all\ngit gc --prune=now\n"
         "rm -f -- /root/setup_repo.sh /root/setup_env.sh /root/install.sh "
         "/eval.sh /patch.diff /test.patch /tmp/patch.diff\n",
@@ -87,6 +89,7 @@ async def _reset(name, base, timeout):
 async def _solve(agent, task):
     """The enclosing rollout pins this call's Snapshot and configuration."""
     config = copy.deepcopy(agent.config)
+    origins = _model_egress._origins(config)
     options = config.get("swe_bench", {})
     timeout = config.get("timeout", 300)
     setup_timeout = options.get("setup_timeout", 600)
@@ -122,6 +125,7 @@ async def _solve(agent, task):
                     "--name",
                     name,
                     "--init",
+                    "--cap-drop=NET_RAW",
                     "--user",
                     "root",
                     "--workdir",
@@ -165,106 +169,121 @@ async def _solve(agent, task):
                 await _docker(
                     "exec", name, "/bin/sh", "-c", setup, timeout=setup_timeout
                 )
-            phase = "execution"
-            # Let the native timeout handler finish its trace before enforcing
-            # the outer deadline; both harnesses also reap their own children.
-            async with asyncio.timeout(timeout + cleanup_grace):
-                command = shlex.join(
-                    [
-                        f"{_ROOT}/venv/bin/python",
-                        "-I",
+            phase = "model network setup"
+            async with _model_egress.restricted(
+                _docker, name, cleanup_grace, origins
+            ) as env:
+                phase = "execution"
+                # Let the native timeout handler finish its trace before enforcing
+                # the outer deadline; both harnesses also reap their own children.
+                async with asyncio.timeout(timeout + cleanup_grace):
+                    command = shlex.join(
+                        [
+                            f"{_ROOT}/venv/bin/python",
+                            "-I",
+                            "-c",
+                            f"import sys; sys.path.insert(0, {_ROOT + '/package'!r}); "
+                            "import runpy; runpy.run_module('flashrsi.integrations._container', "
+                            "run_name='__main__', alter_sys=True)",
+                            f"{_ROOT}/request.json",
+                            f"{_ROOT}/trajectory.json",
+                        ]
+                    )
+                    result = await _docker(
+                        "exec",
+                        *(arg for k, v in env.items() for arg in ("--env", f"{k}={v}")),
+                        "--workdir",
+                        "/testbed",
+                        name,
+                        "/bin/bash",
                         "-c",
-                        f"import sys; sys.path.insert(0, {_ROOT + '/package'!r}); "
-                        "import runpy; runpy.run_module('flashrsi.integrations._container', "
-                        "run_name='__main__', alter_sys=True)",
-                        f"{_ROOT}/request.json",
-                        f"{_ROOT}/trajectory.json",
-                    ]
-                )
-                result = await _docker(
-                    "exec",
-                    "--workdir",
-                    "/testbed",
-                    name,
-                    "/bin/bash",
-                    "-c",
-                    "set -e\nsource /opt/miniconda3/bin/activate testbed\nexec "
-                    + command,
-                    timeout=timeout + cleanup_grace,
-                    check=False,
-                )
-                # Read in-container rather than copying an Agent-controlled
-                # file/symlink to the host filesystem.
-                raw = (
-                    await _docker(
-                        "exec", name, "cat", f"{_ROOT}/trajectory.json", timeout=timeout
+                        "set -e\nsource /opt/miniconda3/bin/activate testbed\nexec "
+                        + command,
+                        timeout=timeout + cleanup_grace,
+                        check=False,
                     )
-                ).stdout
-                values = json.loads(raw)
-                values.pop("task", None)
-                trajectory = Trajectory(**values)
-                trajectory = replace(
-                    trajectory,
-                    messages=(
-                        record,
-                        *(
-                            item
-                            for item in trajectory.messages
-                            if item.get("type")
-                            not in ("RunConfig", "SWEBenchPatch", "SWEBenchVerifier")
+                    # Read in-container rather than copying an Agent-controlled
+                    # file/symlink to the host filesystem.
+                    raw = (
+                        await _docker(
+                            "exec",
+                            name,
+                            "cat",
+                            f"{_ROOT}/trajectory.json",
+                            timeout=timeout,
+                        )
+                    ).stdout
+                    values = json.loads(raw)
+                    values.pop("task", None)
+                    trajectory = Trajectory(**values)
+                    trajectory = replace(
+                        trajectory,
+                        messages=(
+                            record,
+                            *(
+                                item
+                                for item in trajectory.messages
+                                if item.get("type")
+                                not in (
+                                    "RunConfig",
+                                    "SWEBenchPatch",
+                                    "SWEBenchVerifier",
+                                )
+                            ),
                         ),
-                    ),
-                )
-                if result.returncode and trajectory.status == "finished":
-                    raise RuntimeError(
-                        f"SWE Agent process exited with {result.returncode}: {result.stderr[-4000:]}"
                     )
-                # diff against base includes committed, staged and unstaged
-                # changes. Intent-to-add also includes new nonignored files.
-                await _docker(
-                    "exec",
-                    name,
-                    "git",
-                    "-C",
-                    "/testbed",
-                    "add",
-                    "-N",
-                    "--",
-                    ".",
-                    timeout=timeout,
-                )
-                patch = (
+                    if result.returncode and trajectory.status == "finished":
+                        raise RuntimeError(
+                            f"SWE Agent process exited with {result.returncode}: {result.stderr[-4000:]}"
+                        )
+                    # diff against base includes committed, staged and unstaged
+                    # changes. Intent-to-add also includes new nonignored files.
                     await _docker(
                         "exec",
                         name,
                         "git",
-                        "-c",
-                        "core.quotePath=true",
                         "-C",
                         "/testbed",
-                        "diff",
-                        "--no-ext-diff",
-                        "--no-textconv",
-                        "--binary",
-                        "--full-index",
-                        task.metadata["base_commit"],
+                        "add",
+                        "-N",
                         "--",
                         ".",
                         timeout=timeout,
                     )
-                ).stdout
-                if _redact(patch, secrets) != patch:
-                    raise ValueError("SWE patch contains configured credentials")
-                event = {
-                    "type": "SWEBenchPatch",
-                    "task_id": task.task_id,
-                    "task_checksum": task.metadata["task_checksum"],
-                    "snapshot_id": snapshot.id,
-                    "base_commit": task.metadata["base_commit"],
-                    "image_id": image,
-                    "model_patch": patch,
-                }
-                trajectory = replace(trajectory, messages=(*trajectory.messages, event))
+                    patch = (
+                        await _docker(
+                            "exec",
+                            name,
+                            "git",
+                            "-c",
+                            "core.quotePath=true",
+                            "-C",
+                            "/testbed",
+                            "diff",
+                            "--no-ext-diff",
+                            "--no-textconv",
+                            "--binary",
+                            "--full-index",
+                            task.metadata["base_commit"],
+                            "--",
+                            ".",
+                            timeout=timeout,
+                        )
+                    ).stdout
+                    if _redact(patch, secrets) != patch:
+                        raise ValueError("SWE patch contains configured credentials")
+                    event = {
+                        "type": "SWEBenchPatch",
+                        "task_id": task.task_id,
+                        "task_checksum": task.metadata["task_checksum"],
+                        "snapshot_id": snapshot.id,
+                        "base_commit": task.metadata["base_commit"],
+                        "image_id": image,
+                        "model_patch": patch,
+                    }
+                    trajectory = replace(
+                        trajectory, messages=(*trajectory.messages, event)
+                    )
         except TimeoutError:
             trajectory = replace(
                 trajectory, status="error", error_message=f"SWE {phase} timed out"

@@ -75,6 +75,10 @@ def _record(directory, root, cache=None):
     if cache is None or documents not in cache:
         digest = hashlib.sha256()
         for path in _files(documents):
+            if path.name.casefold() == "task.json":
+                raise ValueError(
+                    "Harvey LAB documents must exclude native task metadata"
+                )
             digest.update(path.relative_to(documents).as_posix().encode() + b"\0")
             digest.update(hashlib.sha256(path.read_bytes()).digest())
         documents_digest = digest.hexdigest()

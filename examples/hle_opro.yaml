@@ -1,6 +1,7 @@
 # Copy to a sibling *.local.yaml so relative paths keep their meaning.
 # Fill Target/Worker model settings and every extra role/service below.
-# HLE text-only. Judge must support the structured-output protocol; configure it independently.
+# HLE text-only. Configure the Judge independently. For DeepSeek, set
+# benchmark.judge.llm.response_format to {type: json_object}.
 # Native loader streams official cais/hle at a pinned revision and excludes image questions.
 # No RUC-NLPIR/FlashRSI dataset config is needed. Obtain official HF access and log in first.
 # 1/1/1 is a custom experiment partition, not an official benchmark result.
