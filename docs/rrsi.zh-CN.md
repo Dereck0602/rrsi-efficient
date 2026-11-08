@@ -100,7 +100,7 @@ harness 导出目录和环境也各自独立。全局并发槽位覆盖清理全
 `candidate-queue` 记录保存完整派发计划和全局并发上限；各候选的
 `measurement.scheduling` 标明轮次和候选编号。进度显示整个队列，并标明候选、
 快照前缀及 repeat。已有 baseline 和第一轮恢复入口允许切换此开关，并记录前后值；
-不支持恢复执行到一半的共享队列。基线、校准、smoke 和留出集使用原执行路径。
+逐 trial 检查点恢复则可以复用未完成轮次中的已完成任务，见文末恢复说明。
 交错执行可能改变模型负载和随机输出，因此这里保证评测与选择规则一致，
 不承诺模型响应逐字一致。
 
@@ -132,7 +132,8 @@ Worker 记录附带轮次和候选编号。通过 smoke 后即释放生成槽位
 `candidate-ready` 记录检查结果，`candidate-queue` 记录每次就绪批次，
 `candidate-dispatch` 记录实际派发顺序、阶段、轮次、候选、快照和 trial 身份。
 队列进度统计已提交任务，候选就绪时总数相应增加。
-已有 baseline/第一轮恢复入口允许调整这两个配置并记录前后值，仍不支持恢复半轮流水线。
+已有 baseline/第一轮恢复入口允许调整这两个配置并记录前后值。
+新的逐 trial 恢复入口保持配置不变，可以复用半轮流水线中已完成的候选和任务。
 
 ## 分数、失败、成本与校准
 
@@ -219,3 +220,37 @@ Worker 成本独立计算：每次候选阶段尝试最多编辑 `repair_rounds 
 归因根据逐题均分变化核对预测任务，并标记至少下降 `1/k` 的未预测退步。未知预测任务 ID 不进入命中率分母。捆绑编辑共享一次候选测量，归因不是每项机制的因果消融。无效或未测候选保留原因，但不计入已测组件尝试与收益统计。
 
 [实现](../flashrsi/algorithms/rrsi/__init__.py)独立移植 [google-research/rrsi](https://github.com/google-research/rrsi/tree/be50316e1db05914068a973f322770ef08ed7ba1) 的机制，固定版本为 `be50316e1db05914068a973f322770ef08ed7ba1`。执行、评分、编辑、版本管理和记录分别复用 Agent、Benchmark、Worker、Snapshot、Algorithm。未复制上游 Git 管理、Domain adapter、角色专用模型配置、恢复/重评命令与起始 harness。SearchQA/MiniAgent 示例是本地适配，不是原始 coding 实验配置。
+
+## 完整轮次与逐 trial 恢复
+
+RRSI 自动写入 `checkpoints/`：完整轮次状态、已完成的分析/候选生成阶段，
+以及每个完成并清理环境后的 Target trial。检查点使用校验和及原子替换。
+完整轮次状态同时包含当前测量、历史最优、delta、编辑历史、分析及耗时估计。
+
+用原配置恢复到一个新的运行目录：
+
+```bash
+python -m flashrsi run --config experiment.yaml --resume-from /path/to/source-run --resume-mode trial
+```
+
+- `trial`：复用已完成阶段和 trial，仅执行缺失部分；完成的失败 trial 仍保留失败结果。
+- `round`：保留最后完整轮次，丢弃未完成轮次的进度，从该轮重新生成和评测。
+
+对应配置键为 `run.resume_from`、`run.resume_mode`，恢复路径相对当前工作目录。
+`--check-only` 校验配置、任务及记录，不执行推理。TB2.1 脚本也支持这些恢复模式；
+其默认 `auto` 优先使用逐 trial 检查点，旧日志则恢复最后完整轮次，只有基线的日志
+继续使用原有 baseline 恢复。原有 `--reselect-round-one` 仍是独立的第一轮重选入口。
+
+trial 身份绑定轮次、候选编号、阶段、重复位置、任务内容/checksum、配置和 harness。
+即使两个候选生成相同的 harness，也分别保留它们的测量结果。
+所有完整候选仍按原编号聚合与选择；恢复不会用先完成的候选提前结束一轮。
+未完成的 Worker 阶段从 incumbent 重新开始，不恢复半写的编辑、模型对话或 KV cache；
+已完成的候选（包括被拒绝的候选）不重新生成。完成前被中断的整个 trial 会重新执行。
+原运行目录只读，恢复使用新目录；损坏记录或任务、模型、预算、算法/调度配置不匹配
+会在推理前拒绝恢复。运行凭据和产物目录可以变化，`T` 因影响退火预算必须保持一致。
+
+没有新检查点的旧运行，只能恢复经过完整性校验的完整轮次，不能凭零散容器产物复用
+半轮 trial。
+恢复元数据记录在 `resume.json`；完成测量按原顺序重新汇总，避免重复计入 trial。
+中断请求尚未报告的用量仍未知。新运行也支持在进化完成、最终留出集评测中断后复用
+已完成的最终测试 trial；独立 `evaluate` 命令的运行方式保持原样。

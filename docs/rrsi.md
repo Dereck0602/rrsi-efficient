@@ -90,9 +90,9 @@ A `candidate-queue` record saves the complete dispatch plan and concurrency;
 per-candidate `measurement.scheduling` identifies its round and variant. Progress
 reports the aggregate queue and includes candidate, Snapshot prefix and repeat.
 Existing baseline and round-one resume modes permit changing this scheduling
-flag and record its before/after values. They do not recover a partial shared
-queue. Baseline, calibration, smoke and held-out evaluation keep their existing
-execution paths. Interleaving can change model load and stochastic outputs;
+flag and record its before/after values. Durable trial continuation additionally
+recovers completed jobs from an interrupted queue while retaining configuration.
+See the continuation section below. Interleaving can change model load and stochastic outputs;
 this preserves the experiment's rules, not bitwise-identical model responses.
 
 `proposal_concurrency` (default 1) bounds independent candidate-generation phases,
@@ -133,7 +133,8 @@ never determines the equal-score winner. `candidate-ready` records gate outcomes
 start order, phase, round, variant, Snapshot and trial identity. Queue progress
 counts submitted jobs and grows as candidates become ready. Supported baseline
 and round-one replay modes permit changing both options and record before/after
-values; partial-round pipeline recovery remains unsupported.
+values. Durable trial continuation also recovers an interrupted pipeline,
+reusing complete proposals and completed trials; its execution settings stay fixed.
 
 ## Admission, ties, and final selection
 

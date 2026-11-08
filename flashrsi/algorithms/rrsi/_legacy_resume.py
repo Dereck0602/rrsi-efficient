@@ -53,16 +53,10 @@ def legacy_checkpoint(resume, config):
             revised[source].update(
                 cost=row["cost"], cost_accounting=row["cost_accounting"]
             )
-    current = next(
-        (
-            r
-            for r in reversed(list(revised.values()))
-            if r["snapshot_id"] == latest["current_snapshot_id"]
-        ),
-        None,
-    )
-    if current is None or current["score"] != latest["current_score"]:
-        raise ValueError("Legacy summary does not match its incumbent measurement")
+    resume.legacy_rows = rows
+    resume.legacy_measurements = measurements
+    resume.legacy_revised = revised
+    current = _validate_history(resume, previous["algorithm"].get("k", 2))
     estimates, pending = {}, {}
     # Reconstruct the same per-round timing freeze as the original scheduler.
     for name, row in rows:
@@ -144,3 +138,94 @@ def validate_legacy(resume, algorithm):
         raise ValueError("Legacy checkpoint exceeds configured round count")
     if state["best_score"] != max(state["scores"]):
         raise ValueError("Legacy checkpoint best score differs from history")
+
+
+def _validate_history(resume, repeats):
+    """Match each accepted variant to its own measurement, even with equal IDs."""
+    baseline = resume.legacy_revised[resume.legacy_measurements[0][0]]
+    incumbent = baseline
+    current_id, current_score = baseline["snapshot_id"], baseline["score"]
+    best_id, best_score = current_id, current_score
+    history, round_edits, step, context = [], [], 0, None
+    groups, batch = [], []
+    for name, row in resume.legacy_rows:
+        if name.endswith("-candidate.json") and context is not None:
+            batch.append(row)
+            if len(batch) == repeats:
+                groups.append({"records": batch, "measurement": None})
+                batch = []
+        elif name.endswith("-measurement.json") and context is not None:
+            if not groups or groups[-1]["measurement"] is not None or batch:
+                raise ValueError(
+                    "Legacy candidate measurement has no complete trial group"
+                )
+            groups[-1]["measurement"] = resume.legacy_revised[name]
+        elif name.endswith("-rrsi-context.json"):
+            if (
+                row["step"] != step
+                or row["incumbent_id"] != current_id
+                or row["score"] != current_score
+                or row["best_score"] != best_score
+                or row["history"] != history
+            ):
+                raise ValueError("Legacy round context/history mismatch")
+            context = row
+            groups, batch = [], []
+        elif name.endswith("-edit-history.json"):
+            if context is None or row["t"] != step or row["parent_id"] != current_id:
+                raise ValueError("Legacy edit history parent/round mismatch")
+            round_edits.append(row)
+        elif name.endswith("-round-summary.json"):
+            candidates = {}
+            for edit in round_edits:
+                if edit["candidate_id"] is not None:
+                    if (
+                        candidates.setdefault(edit["variant"], edit["candidate_id"])
+                        != edit["candidate_id"]
+                    ):
+                        raise ValueError(
+                            "Legacy variant identifies different Snapshots"
+                        )
+            if batch or len(groups) != len(candidates):
+                raise ValueError("Legacy candidate trial groups/history mismatch")
+            measurements = {}
+            for (variant, identity), group in zip(
+                sorted(candidates.items()), groups, strict=True
+            ):
+                if any(
+                    record["snapshot_id"] != identity for record in group["records"]
+                ):
+                    raise ValueError("Legacy candidate trial group Snapshot mismatch")
+                measurements[variant] = group["measurement"]
+            selected = [r for r in round_edits if r["accepted"]]
+            variants = {r["variant"] for r in selected}
+            winners = {r["candidate_id"] for r in selected}
+            expected = next(iter(winners)) if winners else current_id
+            if (
+                context is None
+                or len(variants) > 1
+                or len(winners) > 1
+                or row["round"] != step + 1
+                or row["current_snapshot_id"] != expected
+                or row["accepted_candidate"] != (expected != current_id)
+                or row["delta"] != context["delta"]
+            ):
+                raise ValueError("Legacy accepted candidate/summary mismatch")
+            if variants:
+                incumbent = measurements[next(iter(variants))]
+            if incumbent is None or incumbent["score"] != row["current_score"]:
+                raise ValueError("Legacy round measurement/score mismatch")
+            current_id, current_score = expected, incumbent["score"]
+            if current_score > best_score:
+                best_id = current_id
+            best_score = max(best_score, current_score)
+            if (
+                row["best_score"] != best_score
+                or row["best_snapshot_id"] != best_id
+                or row["baseline_score"] != baseline["score"]
+            ):
+                raise ValueError("Legacy historical best mismatch")
+            history.extend(round_edits)
+            round_edits, context = [], None
+            step += 1
+    return incumbent

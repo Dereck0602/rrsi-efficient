@@ -12,9 +12,12 @@ import hashlib
 import json
 import os
 from collections import Counter
+from collections.abc import Mapping
 from contextvars import ContextVar
 from pathlib import Path
 from tempfile import NamedTemporaryFile
+
+import yaml
 
 from flashrsi._progress import Progress, progress_session
 from flashrsi._records import _config_record, _redact, _trajectory_record
@@ -26,10 +29,27 @@ PHASE = ContextVar("rrsi_checkpoint_phase", default=None)
 VARIANT = ContextVar("rrsi_checkpoint_variant", default=None)
 
 
+def _encode(item):
+    # Match ordinary trajectory records for safe YAML values in task metadata.
+    if isinstance(item, Mapping):
+        return dict(item)
+    if isinstance(item, Path):
+        return str(item)
+    return {"type": "yaml", "value": yaml.safe_dump(item)}
+
+
+def _detach(value):
+    return json.loads(json.dumps(value, default=_encode, ensure_ascii=False))
+
+
 def digest(value):
     return hashlib.sha256(
         json.dumps(
-            value, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+            value,
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            default=_encode,
         ).encode()
     ).hexdigest()
 
@@ -68,7 +88,7 @@ def atomic(path, data):
 
 
 def task_record(task):
-    return _trajectory_record(Trajectory(task=task))["task"]
+    return _detach(_trajectory_record(Trajectory(task=task))["task"])
 
 
 def signature(algorithm):
@@ -103,7 +123,10 @@ class Checkpoints:
 
     def save(self, relative, data):
         # Same credential filtering as ordinary records, before checksumming.
-        atomic(self.root / relative, _redact(data, self.algorithm._runtime_secrets()))
+        atomic(
+            self.root / relative,
+            _redact(_detach(data), self.algorithm._runtime_secrets()),
+        )
 
     def start(self):
         algorithm = self.algorithm

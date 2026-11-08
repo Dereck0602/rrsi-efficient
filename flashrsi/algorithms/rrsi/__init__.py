@@ -171,6 +171,7 @@ class RRSI(Algorithm):
             resources.enter_context(progress_scope("RRSI"))
             resources.callback(setattr, self, "_run_dir", self._run_dir)
             if self._run_dir is None:
+                resources.callback(setattr, self, "_checkpoints", None)
                 self._run_dir = Path(resources.enter_context(TemporaryDirectory()))
                 for name in ("snapshots", "trajectories", "working"):
                     (self._run_dir / name).mkdir()
