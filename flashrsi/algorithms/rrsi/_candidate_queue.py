@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-from collections import deque
 from dataclasses import dataclass
 
 from flashrsi._progress import Progress, progress_scope, progress_session
@@ -22,6 +21,8 @@ class CandidateJob:
     trial: int
     index: int
     estimated_seconds: float | None
+    rank: int = 0
+    phase: str = "candidate"
 
     @property
     def key(self):
@@ -32,6 +33,7 @@ class CandidateJob:
             self.task.task_id,
             self.task.metadata.get("task_checksum"),
             self.trial,
+            self.phase,
         )
 
     def record(self):
@@ -44,6 +46,8 @@ class CandidateJob:
             "trial": self.trial,
             "index": self.index,
             "estimated_seconds": self.estimated_seconds,
+            "dispatch_rank": self.rank,
+            "phase": self.phase,
         }
 
 
@@ -63,8 +67,9 @@ def candidate_schedule(candidates, tasks, repeats, estimates, policy, step):
             item["trial"],
             item["index"],
             item["estimated_seconds"],
+            rank=rank,
         )
-        for item in plan["jobs"]
+        for rank, item in enumerate(plan["jobs"])
         for variant, snapshot in candidates
     )
     # The single-candidate schedule remains compatible with existing records.
@@ -110,64 +115,136 @@ def collect_results(jobs, completed):
     return {variant: tuple(rows) for variant, rows in grouped.items()}
 
 
-async def execute_candidates(target, jobs):
-    """Preserve adapter rollout hooks and wait for cleanup before freeing slots."""
-    config = copy.deepcopy(target.config)
-    concurrency = config.get("concurrency", 1)
-    if type(concurrency) is not int or concurrency < 1:
-        raise ValueError("agent.concurrency must be a positive integer")
-    baseline = target.snapshot
-    for snapshot in {job.snapshot.id: job.snapshot for job in jobs}.values():
-        target._validate_snapshot(snapshot, baseline=baseline)
-    pending = deque(jobs)
-    completed = []
-    with progress_scope("shared candidate queue"):
-        async with Progress(len(jobs)) as progress:
+async def cancel_and_wait(tasks):
+    """Never interrupt a child's asynchronous cleanup a second time."""
+    for task in tasks:
+        if not task.done() and not task.cancelling():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
 
-            async def worker():
-                while pending:
-                    job = pending.popleft()
-                    label = (
-                        f"candidate={job.variant + 1} snapshot={job.snapshot.id[:12]} "
-                        f"{job.task.task_id} [repeat={job.trial + 1}]"
-                    )
-                    progress.start(label)
-                    status = "error"
-                    token = target._execution.set(
-                        _Execution(job.snapshot, None, copy.deepcopy(config))
-                    )
-                    try:
-                        # Each existing rollout receives one explicitly pinned
-                        # job. Its timer/deadlines start only after dispatch.
-                        # Show the aggregate queue instead of one bar per job.
-                        with progress_session("off"):
-                            rows = await target.rollout(
-                                (job.task,), snapshot=job.snapshot
-                            )
-                        if len(rows) != 1:
-                            raise ValueError(
-                                "shared candidate rollout must return one job"
-                            )
-                        _validate_result(job, rows[0])
-                        completed.append((job.key, rows[0]))
-                        status = rows[0].status
-                    except asyncio.CancelledError:
-                        status = "cancelled"
-                        raise
-                    finally:
-                        target._execution.reset(token)
-                        progress.finish(label, status)
 
-            workers = [
-                asyncio.create_task(worker())
-                for _ in range(min(concurrency, len(jobs)))
-            ]
+class EvaluationQueue:
+    """Accept ready batches; smoke and full trials share the same Target slots.
+
+    Smoke has priority over waiting full trials. Otherwise use the frozen
+    per-round task rank, then candidate index. Running jobs are never preempted.
+    """
+
+    def __init__(self, target, *, label="shared candidate queue", on_dispatch=None):
+        self.target = target
+        self.config = copy.deepcopy(target.config)
+        self.baseline = target.snapshot
+        self.concurrency = self.config.get("concurrency", 1)
+        if type(self.concurrency) is not int or self.concurrency < 1:
+            raise ValueError("agent.concurrency must be a positive integer")
+        self.label = label
+        self.on_dispatch = on_dispatch
+        self.pending = asyncio.PriorityQueue()
+        self._futures = set()
+        self._keys = set()
+        self._sequence = 0
+        self._error = None
+        self._closed = False
+
+    async def __aenter__(self):
+        with progress_scope(self.label):
+            self.progress = await Progress(0).__aenter__()
+        self.workers = [
+            asyncio.create_task(self._worker()) for _ in range(self.concurrency)
+        ]
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        self._closed = True
+        for future in self._futures:
+            if not future.done():
+                future.cancel()
+        await cancel_and_wait(self.workers)
+        await self.progress.__aexit__(exc_type, exc, traceback)
+
+    async def submit(self, jobs):
+        if self._error is not None:
+            raise self._error
+        if self._closed:
+            raise RuntimeError("evaluation queue is closed")
+        jobs = tuple(jobs)
+        keys = {job.key for job in jobs}
+        if len(keys) != len(jobs) or keys & self._keys:
+            raise ValueError("shared candidate queue contains duplicate jobs")
+        for snapshot in {job.snapshot.id: job.snapshot for job in jobs}.values():
+            self.target._validate_snapshot(snapshot, baseline=self.baseline)
+        self._keys.update(keys)
+        futures = [asyncio.get_running_loop().create_future() for _ in jobs]
+        self._futures.update(futures)
+        self.progress.total += len(jobs)
+        if self.progress.bar is not None:
+            self.progress.bar.total = self.progress.total
+        for job, future in zip(jobs, futures, strict=True):
+            self._sequence += 1
+            priority = (0 if job.phase == "smoke" else 1, job.rank, job.variant)
+            self.pending.put_nowait((priority, self._sequence, job, future))
+        try:
+            rows = await asyncio.gather(*futures)
+            return collect_results(
+                jobs, zip((job.key for job in jobs), rows, strict=True)
+            )
+        finally:
+            self._futures.difference_update(futures)
+
+    def _fail(self, error):
+        self._error = error
+        # Wake every producer, including ones waiting for smoke. The round's
+        # gather then cancels proposal processes as well as evaluation tasks.
+        for future in self._futures:
+            if not future.done():
+                future.set_exception(error)
+        for task in self.workers:
+            if (
+                task is not asyncio.current_task()
+                and not task.done()
+                and not task.cancelling()
+            ):
+                task.cancel()
+
+    async def _worker(self):
+        while True:
+            _, _, job, future = await self.pending.get()
+            if future.done():
+                continue
+            label = (
+                f"{job.phase} candidate={job.variant + 1} snapshot={job.snapshot.id[:12]} "
+                f"{job.task.task_id} [repeat={job.trial + 1}]"
+            )
+            self.progress.start(label)
+            status = "error"
+            token = self.target._execution.set(
+                _Execution(job.snapshot, None, copy.deepcopy(self.config))
+            )
             try:
-                await asyncio.gather(*workers)
-            except BaseException:
-                for worker_task in workers:
-                    if not worker_task.done() and not worker_task.cancelling():
-                        worker_task.cancel()
-                await asyncio.gather(*workers, return_exceptions=True)
+                if self.on_dispatch is not None:
+                    self.on_dispatch(job)
+                # Existing adapter hooks and their timers/deadlines start only
+                # after acquiring a slot. Native cleanup remains in this slot.
+                with progress_session("off"):
+                    rows = await self.target.rollout((job.task,), snapshot=job.snapshot)
+                if len(rows) != 1:
+                    raise ValueError("shared candidate rollout must return one job")
+                _validate_result(job, rows[0])
+                status = rows[0].status
+                if not future.done():
+                    future.set_result(rows[0])
+            except asyncio.CancelledError:
+                status = "cancelled"
                 raise
-    return collect_results(jobs, completed)
+            except Exception as error:
+                self._fail(error)
+                return
+            finally:
+                self.target._execution.reset(token)
+                self.progress.finish(label, status)
+
+
+async def execute_candidates(target, jobs):
+    """Evaluate a fixed batch through the same queue used by the pipeline."""
+    async with EvaluationQueue(target) as queue:
+        return await queue.submit(jobs)

@@ -14,6 +14,7 @@ from test_rrsi import change, saved, setup
 from flashrsi._progress import progress_session
 from flashrsi.agents import Codex, MiniAgent
 from flashrsi.algorithms.rrsi._candidate_queue import (
+    EvaluationQueue,
     candidate_schedule,
     collect_results,
     execute_candidates,
@@ -548,5 +549,56 @@ def test_shared_and_serial_measurements_have_identical_scores_costs_and_evidence
             normalized(shared[i]) for i in range(2)
         ]
         assert shared[0]["cost_accounting"]["estimate"]["eligible"] is True
+
+    asyncio.run(scenario())
+
+
+def test_later_ready_smoke_then_long_task_precede_waiting_short_trials(
+    monkeypatch, tmp_path
+):
+    algo, _ = setup(monkeypatch, tmp_path, lambda *_: [])
+    algo.target.config.concurrency = 1
+    snapshot = algo.target.snapshot
+    tasks = (Task("long", "long"), Task("short", "short"))
+    a, _ = candidate_schedule(
+        ((0, snapshot),), tasks, 1, {"long": 10, "short": 1}, "longest_first", 0
+    )
+    b, _ = candidate_schedule(
+        ((1, snapshot),), tasks, 1, {"long": 10, "short": 1}, "longest_first", 0
+    )
+    smoke = (replace(b[0], phase="smoke"),)
+
+    async def scenario():
+        first_started, release = asyncio.Event(), asyncio.Event()
+        dispatched = []
+        original = algo.target.rollout
+
+        async def rollout(tasks, *, snapshot):
+            if len(dispatched) == 1:
+                first_started.set()
+                await release.wait()
+            return await original(tasks, snapshot=snapshot)
+
+        monkeypatch.setattr(algo.target, "rollout", rollout)
+        async with EvaluationQueue(
+            algo.target,
+            on_dispatch=lambda j: dispatched.append(
+                (j.phase, j.variant, j.task.task_id)
+            ),
+        ) as queue:
+            first = asyncio.create_task(queue.submit(a))
+            await asyncio.wait_for(first_started.wait(), 2)
+            second = asyncio.create_task(queue.submit(b))
+            gate = asyncio.create_task(queue.submit(smoke))
+            await asyncio.sleep(0)
+            release.set()
+            await asyncio.wait_for(asyncio.gather(first, second, gate), 2)
+        assert dispatched == [
+            ("candidate", 0, "long"),
+            ("smoke", 1, "long"),
+            ("candidate", 1, "long"),
+            ("candidate", 0, "short"),
+            ("candidate", 1, "short"),
+        ]
 
     asyncio.run(scenario())
