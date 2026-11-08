@@ -107,9 +107,7 @@ def _parser() -> argparse.ArgumentParser:
         sub.add_argument(
             "--config", "-c", metavar="PATH", help="Read configuration from YAML"
         )
-        sub.add_argument(
-            "--benchmark", metavar="NAME", help="Override benchmark.name"
-        )
+        sub.add_argument("--benchmark", metavar="NAME", help="Override benchmark.name")
         sub.add_argument(
             "--agent-harness",
             "--agent",
@@ -136,6 +134,17 @@ def _parser() -> argparse.ArgumentParser:
             help="Check startup without model calls; may download native data",
         )
         if command == "run":
+            sub.add_argument(
+                "--resume-from",
+                metavar="RUN_DIR",
+                help="Resume RRSI into a new run directory",
+            )
+            sub.add_argument(
+                "--resume-mode",
+                choices=("round", "trial"),
+                default=None,
+                help="Reuse completed rounds or also completed trials (default: trial)",
+            )
             sub.add_argument(
                 "--algorithm",
                 "--algo",
@@ -204,6 +213,8 @@ def _looks_like_option(value: str) -> bool:
 def _overrides(args: argparse.Namespace) -> dict[str, Any]:
     result: dict[str, Any] = {}
     fields = {
+        "resume_from": "run.resume_from",
+        "resume_mode": "run.resume_mode",
         "benchmark": "benchmark.name",
         "algorithm": "algorithm.name",
         "agent": "agent.name",

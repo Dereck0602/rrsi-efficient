@@ -73,7 +73,10 @@ async def generate_candidates(algorithm, parent, context, evidence):
         )
 
     async with EvaluationQueue(
-        algorithm.target, label="candidate pipeline", on_dispatch=dispatch
+        algorithm.target,
+        label="candidate pipeline",
+        on_dispatch=dispatch,
+        checkpoint=getattr(algorithm, "_checkpoints", None),
     ) as queue:
         with progress_scope("candidate generation"):
             async with Progress(config.m, unit="candidates") as progress:

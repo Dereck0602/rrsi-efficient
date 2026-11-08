@@ -130,8 +130,16 @@ class EvaluationQueue:
     per-round task rank, then candidate index. Running jobs are never preempted.
     """
 
-    def __init__(self, target, *, label="shared candidate queue", on_dispatch=None):
+    def __init__(
+        self,
+        target,
+        *,
+        label="shared candidate queue",
+        on_dispatch=None,
+        checkpoint=None,
+    ):
         self.target = target
+        self.checkpoint = checkpoint
         self.config = copy.deepcopy(target.config)
         self.baseline = target.snapshot
         self.concurrency = self.config.get("concurrency", 1)
@@ -224,15 +232,39 @@ class EvaluationQueue:
                 token = self.target._execution.set(
                     _Execution(job.snapshot, None, copy.deepcopy(self.config))
                 )
-                if self.on_dispatch is not None:
-                    self.on_dispatch(job)
-                # Existing adapter hooks and their timers/deadlines start only
-                # after acquiring a slot. Native cleanup remains in this slot.
-                with progress_session("off"):
-                    rows = await self.target.rollout((job.task,), snapshot=job.snapshot)
-                if len(rows) != 1:
-                    raise ValueError("shared candidate rollout must return one job")
-                _validate_result(job, rows[0])
+                checkpoint = self.checkpoint
+                key = (
+                    None
+                    if checkpoint is None
+                    else checkpoint.trial_key(
+                        job.snapshot,
+                        job.task,
+                        job.index,
+                        phase=job.phase,
+                        variant=job.variant,
+                        step=job.step,
+                    )
+                )
+                restored = (
+                    None if checkpoint is None else checkpoint.load_trial(key, job.task)
+                )
+                if restored is None:
+                    if self.on_dispatch is not None:
+                        self.on_dispatch(job)
+                    # Native timers start after slot acquisition and cleanup
+                    # finishes before the trial is committed.
+                    with progress_session("off"):
+                        rows = await self.target.rollout(
+                            (job.task,), snapshot=job.snapshot
+                        )
+                    if len(rows) != 1:
+                        raise ValueError("shared candidate rollout must return one job")
+                    _validate_result(job, rows[0])
+                    if checkpoint is not None:
+                        checkpoint.save_trial(key, job.task, rows[0])
+                else:
+                    rows = (restored,)
+                    _validate_result(job, restored)
                 status = rows[0].status
                 if not future.done():
                     future.set_result(rows[0])
@@ -252,7 +284,7 @@ class EvaluationQueue:
                 self.progress.finish(label, status)
 
 
-async def execute_candidates(target, jobs):
+async def execute_candidates(target, jobs, *, checkpoint=None):
     """Evaluate a fixed batch through the same queue used by the pipeline."""
-    async with EvaluationQueue(target) as queue:
+    async with EvaluationQueue(target, checkpoint=checkpoint) as queue:
         return await queue.submit(jobs)

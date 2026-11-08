@@ -251,6 +251,14 @@ def _validate(config: dict) -> None:
     mode = config["run"].get("mode", "run")
     if mode not in ("run", "evaluate"):
         raise ValueError("run.mode must be run or evaluate")
+    if config["run"].get("resume_mode", "trial") not in ("round", "trial"):
+        raise ValueError("run.resume_mode must be round or trial")
+    if "resume_mode" in config["run"] and not config["run"].get("resume_from"):
+        raise ValueError("run.resume_mode requires run.resume_from")
+    if config["run"].get("resume_from"):
+        _require_text(config["run"]["resume_from"], "run.resume_from")
+        if mode != "run" or config["algorithm"]["name"] != "rrsi":
+            raise ValueError("run.resume_from requires RRSI evolution")
     roles = [("agent", config["agent"])]
     if mode == "evaluate":
         _require_text(config["run"].get("snapshot"), "run.snapshot")

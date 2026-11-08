@@ -29,6 +29,7 @@ from flashrsi.algorithms.rrsi._candidate_queue import (
     candidate_schedule,
     execute_candidates,
 )
+from flashrsi.algorithms.rrsi._checkpoint import VARIANT, Checkpoints, digest
 from flashrsi.algorithms.rrsi._cost import estimate_cost, selection_cost
 from flashrsi.algorithms.rrsi._pipeline import (
     GENERATION,
@@ -178,8 +179,28 @@ class RRSI(Algorithm):
             self._task_duration_estimates = {}
             self._pending_task_durations = {}
             start_step = 0
+            self._checkpoints = Checkpoints(self)
+            recovery = getattr(self, "_checkpoint_resume", None)
+            restored = recovery.restore(self) if recovery is not None else None
+            self._checkpoints.start()
             round_resume = getattr(self, "_round_resume", None)
-            if round_resume is not None:
+            if restored is not None:
+                current, incumbent = restored["current"], restored["incumbent"]
+                delta, baseline_score = restored["delta"], restored["baseline_score"]
+                best_score, best_snapshot_id = (
+                    restored["best_score"],
+                    restored["best_snapshot_id"],
+                )
+                scores, history, analysis = (
+                    restored["scores"],
+                    restored["history"],
+                    restored["analysis"],
+                )
+                start_step = restored["start_step"]
+                progress_note(
+                    f"Restored RRSI checkpoint; continuing at round={start_step + 1}"
+                )
+            elif round_resume is not None:
                 state = round_resume.restore(self)
                 current, incumbent = state["current"], state["incumbent"]
                 delta, baseline_score = state["delta"], state["baseline_score"]
@@ -235,8 +256,27 @@ class RRSI(Algorithm):
                 scores, history = [best_score], []
                 analysis = {"failure_modes": [], "success_habits": []}
 
+            def boundary(next_step):
+                self._checkpoints.boundary(
+                    {
+                        "current": current,
+                        "incumbent": incumbent,
+                        "delta": delta,
+                        "baseline_score": baseline_score,
+                        "best_score": best_score,
+                        "best_snapshot_id": best_snapshot_id,
+                        "scores": scores,
+                        "history": history,
+                        "analysis": analysis,
+                        "start_step": next_step,
+                    }
+                )
+
+            if restored is None or recovery.legacy:
+                boundary(start_step)
             async with Progress(self.config.T - start_step, unit="rounds") as rounds:
                 for step in range(start_step, self.config.T):
+                    self._checkpoints.step = step
                     # Freeze one estimate per task for all sibling candidates.
                     # Round 1 uses baseline/calibration; later rounds use all
                     # completed candidate measurements from the previous round.
@@ -250,24 +290,9 @@ class RRSI(Algorithm):
                             self.config.n_success_traces,
                         )
                         progress_note("Worker: analyzing trajectories")
-                        analysis_failure = None
-                        try:
-                            analysis = await retry_worker_phase(
-                                self,
-                                "analysis",
-                                partial(
-                                    self._analyze,
-                                    current.id,
-                                    traces,
-                                    {
-                                        key: analysis[key]
-                                        for key in ("failure_modes", "success_habits")
-                                    },
-                                ),
-                                step=step,
-                            )
-                        except WorkerOutputBudgetExhausted as error:
-                            analysis_failure = str(error)
+                        analysis, analysis_failure = await self._analyze_round(
+                            current, traces, analysis, step
+                        )
                         context = {
                             "step": step,
                             "incumbent_id": current.id,
@@ -327,6 +352,7 @@ class RRSI(Algorithm):
                         if analysis_failure:
                             summary.update(status="skipped", reason=analysis_failure)
                         self._record("round-summary", summary)
+                        boundary(step + 1)
                         _LOGGER.info(
                             "RRSI round=%d/%d complete | evolve current=%.2f%% "
                             "best=%.2f%% baseline=%.2f%% gain=%+.2fpp | "
@@ -346,6 +372,7 @@ class RRSI(Algorithm):
                         )
                     rounds.finish(round_label)
 
+            self._checkpoints.step = self.config.T
             return self._promote(
                 seed,
                 current,
@@ -365,20 +392,86 @@ class RRSI(Algorithm):
                 "variant": generation.variant,
             }
         super()._record(label, payload)
+        checkpoint = getattr(self, "_checkpoints", None)
+        if checkpoint is not None:
+            checkpoint.recorded(label)
+
+    async def _analyze_round(self, current, traces, analysis, step):
+        async def analyze():
+            try:
+                result = await retry_worker_phase(
+                    self,
+                    "analysis",
+                    partial(
+                        self._analyze,
+                        current.id,
+                        traces,
+                        {
+                            key: analysis[key]
+                            for key in ("failure_modes", "success_habits")
+                        },
+                    ),
+                    step=step,
+                )
+                return result, None
+            except WorkerOutputBudgetExhausted as error:
+                return analysis, str(error)
+
+        checkpoint = getattr(self, "_checkpoints", None)
+        if checkpoint is None:
+            return await analyze()
+        return await checkpoint.phase(
+            {
+                "phase": "analysis",
+                "parent": current.id,
+                "input": digest([traces, analysis]),
+            },
+            analyze,
+        )
 
     async def _propose_candidate(self, parent, variant, context, evidence):
-        with progress_scope(f"candidate={variant + 1}/{self.config.m}"):
-            progress_note("Worker: proposing harness edits")
-            try:
-                return await retry_worker_phase(
-                    self,
-                    "candidate",
-                    partial(self._propose, parent, variant, context, evidence),
-                    step=context["step"],
-                    variant=variant,
-                )
-            except WorkerOutputBudgetExhausted as error:
-                return None, [], "", str(error)
+        async def propose():
+            with progress_scope(f"candidate={variant + 1}/{self.config.m}"):
+                progress_note("Worker: proposing harness edits")
+                try:
+                    return await retry_worker_phase(
+                        self,
+                        "candidate",
+                        partial(self._propose, parent, variant, context, evidence),
+                        step=context["step"],
+                        variant=variant,
+                    )
+                except WorkerOutputBudgetExhausted as error:
+                    return None, [], "", str(error)
+
+        checkpoint = getattr(self, "_checkpoints", None)
+        token = VARIANT.set(variant)
+        try:
+            if checkpoint is None:
+                return await propose()
+            return await checkpoint.phase(
+                {
+                    "phase": "proposal",
+                    "variant": variant,
+                    "parent": parent.id,
+                    "context": digest(context),
+                },
+                propose,
+            )
+        finally:
+            VARIANT.reset(token)
+
+    async def _evaluate(self, snapshot, tasks, *, label):
+        checkpoint = getattr(self, "_checkpoints", None)
+        if checkpoint is None:
+            return await super()._evaluate(snapshot, tasks, label=label)
+        self._save_snapshot(snapshot)
+        tasks = tuple(tasks)
+        with progress_scope(label):
+            rows = await checkpoint.rollout(
+                snapshot, tasks, phase=label, variant=VARIANT.get()
+            )
+        return self._grade_and_record(snapshot, tasks, rows, label=label)
 
     async def _select(
         self, parent, incumbent, proposals, context, history, *, measurements=None
@@ -401,7 +494,11 @@ class RRSI(Algorithm):
                 try:
                     with progress_scope(f"candidate={variant + 1}/{self.config.m}"):
                         if measurements is None:
-                            measurement = await self._measure(snapshot, "candidate")
+                            token = VARIANT.set(variant)
+                            try:
+                                measurement = await self._measure(snapshot, "candidate")
+                            finally:
+                                VARIANT.reset(token)
                         else:
                             measurement = measurements[variant]
                             if isinstance(measurement, _InvalidMeasurement):
@@ -487,7 +584,9 @@ class RRSI(Algorithm):
             f"executions={len(jobs)}; task order={self.config.task_order}; "
             f"historical timings={scheduling['known_tasks']}/{len(tasks)}"
         )
-        trajectories = await execute_candidates(self.target, jobs)
+        trajectories = await execute_candidates(
+            self.target, jobs, checkpoint=getattr(self, "_checkpoints", None)
+        )
         return self._summarize_candidates(candidates, tasks, trajectories, scheduling)
 
     def _summarize_candidates(self, candidates, tasks, trajectories, scheduling):
@@ -557,7 +656,21 @@ class RRSI(Algorithm):
                     f"historical timings={scheduling['known_tasks']}/{len(tasks)}; "
                     f"executions={len(slots)}"
                 )
-                dispatched = await self.target.rollout(queued, snapshot=snapshot)
+                checkpoint = getattr(self, "_checkpoints", None)
+                if checkpoint is None:
+                    dispatched = await self.target.rollout(queued, snapshot=snapshot)
+                else:
+                    phase = label
+                    if label == "calibration-eval":
+                        phase = f"calibration-eval-{checkpoint.calibration}"
+                        checkpoint.calibration += 1
+                    dispatched = await checkpoint.rollout(
+                        snapshot,
+                        queued,
+                        phase=phase,
+                        indexes=order,
+                        variant=VARIANT.get(),
+                    )
             if tuple(row.task for row in dispatched) != queued:
                 raise ValueError("repeated rollout must preserve tasks and order")
             trajectories = [None] * len(slots)

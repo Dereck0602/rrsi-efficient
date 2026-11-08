@@ -250,3 +250,54 @@ Worker cost is separate: each candidate phase attempt has at most `repair_rounds
 Attribution checks predicted tasks against per-task mean changes and marks unpredicted drops of at least `1/k`. Unknown predicted task IDs are excluded from the hit-rate denominator. Bundled edits share a candidate measurement; attribution is not a causal ablation of each mechanism. Invalid or unmeasured candidates retain reasons but do not count as measured component attempts or gains.
 
 The [implementation](../flashrsi/algorithms/rrsi/__init__.py) independently ports mechanisms from [google-research/rrsi](https://github.com/google-research/rrsi/tree/be50316e1db05914068a973f322770ef08ed7ba1), pinned to `be50316e1db05914068a973f322770ef08ed7ba1`. Agent, Benchmark, Worker, Snapshot and Algorithm supply execution, grading, edits, versioning and records. Upstream Git management, Domain adapters, role-specific model configuration, resume/re-evaluation commands and starting harnesses are not replicated. The SearchQA/MiniAgent example is a local adaptation, not the original coding experiment configuration.
+
+## Durable RRSI continuation
+
+RRSI now writes `checkpoints/identity.json`, an atomic `round.json`, completed
+analysis/proposal phase records, and one checksummed file per finished Target
+trial. Trial files are committed after rollout cleanup, including terminal error
+results. A round boundary contains the incumbent measurement, historical best,
+calibrated delta, scores, complete edit history, prior analysis and scheduler
+estimates. This preserves the existing selection and annealing rules.
+
+Resume into a **new** run directory, using the same resolved configuration:
+
+```bash
+python -m flashrsi run --config experiment.yaml --resume-from /path/to/source-run --resume-mode trial
+# Or discard the incomplete round and restart it from its saved incumbent:
+python -m flashrsi run --config experiment.yaml --resume-from /path/to/source-run --resume-mode round
+```
+
+The equivalent config keys are `run.resume_from` and `run.resume_mode`. Resume
+paths are relative to the working directory. `--check-only` validates the source,
+configuration and loaded tasks without inference. The fixed TB2.1 script also
+accepts `--resume-mode trial|round|baseline`; its default `auto` selects durable
+trial recovery when available, a complete legacy round otherwise, and the old
+baseline import for baseline-only logs. `--reselect-round-one` remains a separate,
+explicit migration that can change selection policy; ordinary continuation does
+not reselect completed rounds.
+
+Trial recovery reuses completed analysis and complete candidate proposals,
+including rejected proposals. A candidate generated before interruption retains
+its original Snapshot and frozen sibling context. Finished trials are matched by
+round, variant, phase, canonical occurrence, full task/checksum, execution config
+and Snapshot. Only missing trials execute. Interrupted Worker phases restart
+from the incumbent; partial edits/conversations are not resumed. Their previously
+recorded Worker usage remains in the audit. Finished failures keep their zero
+reward and error count. Cleanup interrupted before a trial commit can cause that
+whole trial to execute again; this is not exactly-once remote execution.
+
+Incomplete measurements are rebuilt from saved trials in canonical order, with
+one graded record per repeat. Existing committed records are imported once;
+partial aggregate records are regenerated. Unknown usage of interrupted calls
+cannot be reconstructed. Resume validates checksums before inference and refuses
+changed tasks, model/budget/selection/scheduling settings, or corrupted committed
+records. Runtime credentials and artifact locations may change. `T` must stay
+fixed because it affects the edit budget. The source run remains read-only.
+
+Legacy runs without these new files can resume after any complete, contiguous
+round summary, including rounds with rejected/skipped candidates. Their raw
+measurements, task identities and accounting are validated against the archived
+history. Partial legacy trials are **not** certified for reuse. This fallback is
+reported as `legacy_round_import` in `resume.json`. New runs also preserve final
+heldout trials if evolution completed but the final test was interrupted.

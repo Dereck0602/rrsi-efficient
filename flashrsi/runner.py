@@ -299,13 +299,26 @@ async def _prepare(config):
     algorithm = algorithm_type(
         config.algorithm, target=target, worker=worker, benchmark=benchmark
     )
+    algorithm._benchmark_config = copy.deepcopy(config.benchmark)
+    _bind_resume(config, algorithm)
     return algorithm
+
+
+def _bind_resume(config, algorithm):
+    source = config.run.get("resume_from")
+    if source and getattr(algorithm, "_checkpoint_resume", None) is None:
+        from flashrsi.algorithms.rrsi._checkpoint import CheckpointResume
+
+        CheckpointResume(
+            source, config, mode=config.run.get("resume_mode", "trial")
+        ).bind(algorithm)
 
 
 async def _run(config, *, algorithm=None):
     with progress_session(config.run.get("progress", "auto")):
         if algorithm is None:
             algorithm = await _prepare(config)
+        _bind_resume(config, algorithm)
         worker, benchmark = algorithm.worker, algorithm.benchmark
         resolved = copy.deepcopy(config)
         resolved.algorithm = algorithm.config

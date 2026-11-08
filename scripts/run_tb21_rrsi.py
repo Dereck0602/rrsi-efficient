@@ -202,7 +202,13 @@ def main(argv=None):
         "--resume-from",
         type=Path,
         metavar="RUN_DIR",
-        help="Reuse complete baseline repeats from a run that has not begun evolution",
+        help="Resume an interrupted RRSI run into a new output directory",
+    )
+    parser.add_argument(
+        "--resume-mode",
+        choices=("auto", "baseline", "round", "trial"),
+        default="auto",
+        help="auto uses trial checkpoints or the latest complete legacy round",
     )
     parser.add_argument(
         "--reselect-round-one",
@@ -239,14 +245,36 @@ def main(argv=None):
         _validate_host(config)
         plan = experiment_plan(config)
         resume = None
+        if args.resume_mode != "auto" and args.resume_from is None:
+            raise ValueError("--resume-mode requires --resume-from")
         if args.reselect_round_one and args.resume_from is None:
             raise ValueError("--reselect-round-one requires --resume-from")
         if args.resume_from is not None:
             from flashrsi.algorithms.rrsi._resume import BaselineResume
             from flashrsi.algorithms.rrsi._round_resume import RoundOneResume
 
-            resume_cls = RoundOneResume if args.reselect_round_one else BaselineResume
-            resume = resume_cls(args.resume_from, config)
+            if args.reselect_round_one:
+                if args.resume_mode != "auto":
+                    raise ValueError(
+                        "--reselect-round-one cannot be combined with --resume-mode"
+                    )
+                resume = RoundOneResume(args.resume_from, config)
+            elif args.resume_mode == "baseline" or (
+                args.resume_mode == "auto"
+                and not (args.resume_from / "checkpoints/identity.json").exists()
+                and not any(
+                    (args.resume_from / "trajectories").glob("*-round-summary.json")
+                )
+            ):
+                resume = BaselineResume(args.resume_from, config)
+            else:
+                from flashrsi.algorithms.rrsi._checkpoint import CheckpointResume
+
+                resume = CheckpointResume(
+                    args.resume_from,
+                    config,
+                    mode="trial" if args.resume_mode == "auto" else args.resume_mode,
+                )
             plan["resume"] = resume.metadata()
             budget = plan["target_task_execution_budget"]
             budget["reused_baseline"] = plan["resume"]["reused_baseline_trials"]
