@@ -49,8 +49,9 @@ def test_missing_history_uses_mean_and_ties_keep_canonical_order():
     assert [job["index"] for job in ties["jobs"]] == list(range(6))
 
 
+@pytest.mark.parametrize("shared", [False, True])
 def test_siblings_share_previous_round_mean_including_rejected_candidates(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, shared
 ):
     markers = iter(["ONE", "TWO", "THREE", "FOUR"])
 
@@ -66,6 +67,7 @@ def test_siblings_share_previous_round_mean_including_rejected_candidates(
         m=2,
         k=2,
         task_order="longest_first",
+        shared_candidate_queue=shared,
         outcomes={
             "SEED": (0.5, 100),
             "ONE": (1, 100),

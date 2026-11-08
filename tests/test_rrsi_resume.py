@@ -81,6 +81,8 @@ def test_runner_continues_with_saved_roots_without_rerunning_baseline(baseline):
     current.config.digest_concurrency = 8
     config.algorithm.task_order = "longest_first"
     current.config.task_order = "longest_first"
+    config.algorithm.shared_candidate_queue = True
+    current.config.shared_candidate_queue = True
     before = {str(p): p.read_bytes() for p in old._run_dir.rglob("*") if p.is_file()}
     assert current.target.snapshot.id != old.target.snapshot.id
     resume = BaselineResume(old._run_dir, config)
@@ -101,6 +103,8 @@ def test_runner_continues_with_saved_roots_without_rerunning_baseline(baseline):
     assert metadata["digest_concurrency_after"] == 8
     assert metadata["task_order_before"] == "fifo"
     assert metadata["task_order_after"] == "longest_first"
+    assert metadata["shared_candidate_queue_before"] is False
+    assert metadata["shared_candidate_queue_after"] is True
     assert metadata["source_sha256"]
     records = list((run_dir / "trajectories").glob("*-baseline.json"))
     assert len(records) == 2

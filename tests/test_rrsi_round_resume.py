@@ -25,12 +25,20 @@ def hashes(root):
 
 
 @pytest.fixture
-def archived(monkeypatch, tmp_path):
+def archived(monkeypatch, tmp_path, request):
     def edit(prompt, directory):
         (directory / "skills/main.md").write_text("GOOD")
         return [change()]
 
-    old, _ = setup(monkeypatch, tmp_path / "old", edit, T=2, k=2, delta=0.1)
+    old, _ = setup(
+        monkeypatch,
+        tmp_path / "old",
+        edit,
+        T=2,
+        k=2,
+        delta=0.1,
+        shared_candidate_queue=getattr(request, "param", False),
+    )
     old.worker.config.llm.model_name = "offline-worker"
     old.worker.config.name = old.worker.name
     old.worker._snapshot = Snapshot._capture(
@@ -115,15 +123,23 @@ def archived(monkeypatch, tmp_path):
     return old, current, config, calls, next_contexts
 
 
+@pytest.mark.parametrize("archived", [False, True], indirect=True)
 def test_reselection_resumes_second_round_without_new_baseline_or_first_round_trials(
     archived,
 ):
     old, current, config, calls, contexts = archived
+    config.algorithm.shared_candidate_queue = True
+    current.config.shared_candidate_queue = True
     before = hashes(old._run_dir)
     resume = RoundOneResume(old._run_dir, config)
     resume.bind(current)
     selected = saved(old, "measurement")[-1]["snapshot_id"]
     assert resume.state["current"].id == selected
+    assert (
+        resume.metadata()["shared_candidate_queue_before"]
+        is old.config.shared_candidate_queue
+    )
+    assert resume.metadata()["shared_candidate_queue_after"] is True
     assert resume.decisions[0]["admissible"]
     assert resume.decisions[0]["cost_comparison"] == "estimated_conservative"
     assert resume.revised[1]["cost_accounting"]["complete"] is False

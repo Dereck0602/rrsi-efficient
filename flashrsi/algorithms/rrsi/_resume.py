@@ -58,11 +58,12 @@ class BaselineResume:
             values.pop("invalid_missing_frac", None)
             values.pop("digest_concurrency", None)
             values.pop("task_order", None)
+            values.pop("shared_candidate_queue", None)
             values.pop("cost_policy", None)
             values.pop("cost_estimate_max_frac", None)
         if _redact_config(old_algorithm) != _redact_config(new_algorithm):
             raise ValueError(
-                "Baseline resume permits changing only the error-rate threshold, digest concurrency, task order and cost estimation policy"
+                "Baseline resume permits changing only the error-rate threshold, digest concurrency, task scheduling and cost estimation policy"
             )
         old_benchmark = _redact_config(previous["benchmark"])
         new_benchmark = _redact_config(config.benchmark)
@@ -100,6 +101,12 @@ class BaselineResume:
         self.digest_concurrency_after = config.algorithm.get("digest_concurrency", 1)
         self.task_order_before = previous["algorithm"].get("task_order", "fifo")
         self.task_order_after = config.algorithm.get("task_order", "fifo")
+        self.shared_candidate_queue_before = previous["algorithm"].get(
+            "shared_candidate_queue", False
+        )
+        self.shared_candidate_queue_after = config.algorithm.get(
+            "shared_candidate_queue", False
+        )
         self.batches = None
 
     def bind(self, algorithm):
@@ -166,6 +173,8 @@ class BaselineResume:
             "digest_concurrency_after": self.digest_concurrency_after,
             "task_order_before": self.task_order_before,
             "task_order_after": self.task_order_after,
+            "shared_candidate_queue_before": self.shared_candidate_queue_before,
+            "shared_candidate_queue_after": self.shared_candidate_queue_after,
             "usage_note": "Inherited baseline usage is included once; no new baseline inference.",
         }
 

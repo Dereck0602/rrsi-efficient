@@ -64,6 +64,37 @@ start/finish times from saved artifacts. Missing or invalid timing is ignored.
 Measurement records include the planned `scheduling` order and per-trial
 `execution_seconds`. Smoke and held-out timings do not train this scheduler.
 
+Set `shared_candidate_queue: true` to share those same Target slots across all
+eligible candidates in a round. The default is `false`, retaining serial
+candidate evaluation; the TB2.1 DeepSeek example enables it. Proposals and smoke
+checks finish first. The shared queue interleaves candidates at each slot of the
+existing repeat/task schedule, using the same frozen historical estimates for
+all candidates. `longest_first` prioritizes estimated slow tasks; ties retain
+repeat/task order with candidates in generation order. Unknown durations use
+the same fallback as above. Finishing one candidate does not trigger selection
+or update the estimates while the queue runs.
+
+Each job binds round, candidate index, immutable Snapshot, original task/checksum
+and repeat. A private copy of the queue's frozen Target configuration accompanies
+each existing adapter `rollout` call. Fresh exports and environments isolate jobs;
+the global limit includes their cleanup, and queue waiting precedes execution
+timers/deadlines. The queue checks returned task, `RunConfig` Snapshot identity
+and any Harbor verifier identity before grouping by the full job key. Missing,
+duplicate or mismatched results abort the batch after awaiting active cleanup;
+ordinary task errors retain the existing zero-reward/reliability rules. Scores,
+token costs and attribution are computed separately per candidate in generation
+order after all jobs finish, preserving equal-score tie breaks and the original
+selection rules. Repeated identical Snapshots still get independent trials.
+
+A `candidate-queue` record saves the complete dispatch plan and concurrency;
+per-candidate `measurement.scheduling` identifies its round and variant. Progress
+reports the aggregate queue and includes candidate, Snapshot prefix and repeat.
+Existing baseline and round-one resume modes permit changing this scheduling
+flag and record its before/after values. They do not recover a partial shared
+queue. Baseline, calibration, smoke and held-out evaluation keep their existing
+execution paths. Interleaving can change model load and stochastic outputs;
+this preserves the experiment's rules, not bitwise-identical model responses.
+
 ## Admission, ties, and final selection
 
 Let S and C be incumbent score and mean Target token cost; S' and C' are candidate values, and S* is the highest score reached by accepted versions:
@@ -140,6 +171,7 @@ Defaults belong under `algorithm`. RRSI rejects unknown algorithm options.
 | `T` | `20` | Search rounds, integer at least 1. |
 | `k` | `2` | Repetitions per full train measurement, integer at least 1. |
 | `task_order` | `fifo` | Dispatch in canonical order or `longest_first` using previous-round task durations. |
+| `shared_candidate_queue` | `false` | Share Target concurrency across eligible candidates; restore canonical results before selection. |
 | `m` | `2` | Sibling candidate slots per round, integer at least 1. |
 | `b_min` | `1` | Minimum mechanism-budget parameter, integer at least 1. |
 | `b_max` | `4` | Initial mechanism-budget parameter, integer at least `b_min`. |

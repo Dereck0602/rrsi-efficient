@@ -44,6 +44,7 @@ class RoundOneResume:
             "worker",
             "digest_concurrency",
             "task_order",
+            "shared_candidate_queue",
             "invalid_missing_frac",
             "cost_policy",
             "cost_estimate_max_frac",
@@ -52,7 +53,7 @@ class RoundOneResume:
             {k: v for k, v in old_config.items() if k not in allowed}
         ) != _redact_config({k: v for k, v in new_config.items() if k not in allowed}):
             raise ValueError(
-                "Round replay permits only cost policy, error threshold, digest concurrency and task order changes"
+                "Round replay permits only cost policy, error threshold, digest concurrency and task scheduling changes"
             )
         for value in (previous["benchmark"], config.benchmark):
             if value.get("data_path"):
@@ -113,6 +114,7 @@ class RoundOneResume:
             row for name, row in self.rows if name.endswith("-edit-history.json")
         ]
         self.cost_policy_before = old_config["cost_policy"]
+        self.shared_candidate_queue_before = old_config["shared_candidate_queue"]
         self.config = new_config
         self.state = None
 
@@ -354,6 +356,8 @@ class RoundOneResume:
             "next_round": 2,
             "cost_policy_before": self.cost_policy_before,
             "cost_policy_after": self.config["cost_policy"],
+            "shared_candidate_queue_before": self.shared_candidate_queue_before,
+            "shared_candidate_queue_after": self.config["shared_candidate_queue"],
             "original_round_summary": self.original_summary,
             "selected_snapshot_id": self.state["current"].id if self.state else None,
             "decisions": getattr(self, "decisions", []),

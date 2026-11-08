@@ -25,6 +25,10 @@ from flashrsi._progress import Progress, progress_note, progress_scope
 from flashrsi._records import _trajectory_record
 from flashrsi.algorithms import _replies
 from flashrsi.algorithms.rrsi import _prompts as prompts
+from flashrsi.algorithms.rrsi._candidate_queue import (
+    candidate_schedule,
+    execute_candidates,
+)
 from flashrsi.algorithms.rrsi._cost import estimate_cost, selection_cost
 from flashrsi.algorithms.rrsi._scheduling import execution_seconds, task_schedule
 from flashrsi.algorithms.rrsi._worker_budget import (
@@ -114,6 +118,7 @@ class RRSI(Algorithm):
         "smoke_n": 2,
         "digest_concurrency": 1,
         "task_order": "fifo",
+        "shared_candidate_queue": False,
         "cost_policy": "complete",
         "cost_estimate_max_frac": 0.25,
         "component_signals": {},
@@ -146,6 +151,7 @@ class RRSI(Algorithm):
         "smoke_n": (int, 0),
         "digest_concurrency": (int, 1),
         "task_order": ("fifo", "longest_first"),
+        "shared_candidate_queue": bool,
         "cost_policy": ("complete", "estimate"),
         "cost_estimate_max_frac": (float, 0),
     }
@@ -359,6 +365,11 @@ class RRSI(Algorithm):
         start = len(history)
         winner, winning_measurement = None, None
         winning_variant = None
+        measurements = (
+            await self._measure_candidates(proposals, context["step"])
+            if self.config.shared_candidate_queue
+            else None
+        )
         for variant, (snapshot, edits, changes, reason) in enumerate(proposals):
             decision = {
                 "admissible": False,
@@ -370,7 +381,12 @@ class RRSI(Algorithm):
             if snapshot is not None:
                 try:
                     with progress_scope(f"candidate={variant + 1}/{self.config.m}"):
-                        measurement = await self._measure(snapshot, "candidate")
+                        if measurements is None:
+                            measurement = await self._measure(snapshot, "candidate")
+                        else:
+                            measurement = measurements[variant]
+                            if isinstance(measurement, _InvalidMeasurement):
+                                raise measurement
                 except _InvalidMeasurement as error:
                     decision["reason"] = str(error)
                 else:
@@ -418,6 +434,67 @@ class RRSI(Algorithm):
             self._record("edit-history", row)
 
         return (parent, incumbent) if winner is None else (winner, winning_measurement)
+
+    async def _measure_candidates(self, proposals, step):
+        candidates = tuple(
+            (variant, snapshot)
+            for variant, (snapshot, *_rest) in enumerate(proposals)
+            if snapshot is not None
+        )
+        if not candidates:
+            return {}
+        tasks = tuple(self.benchmark.train)
+        jobs, scheduling = candidate_schedule(
+            candidates,
+            tasks,
+            self.config.k,
+            getattr(self, "_task_duration_estimates", {}),
+            self.config.task_order,
+            step,
+        )
+        for _, snapshot in candidates:
+            self._save_snapshot(snapshot)
+        self._record(
+            "candidate-queue",
+            {
+                "step": step,
+                "concurrency": self.target.config.get("concurrency", 1),
+                "policy": self.config.task_order,
+                "jobs": [job.record() for job in jobs],
+            },
+        )
+        progress_note(
+            f"shared candidate queue: candidates={len(candidates)}; "
+            f"executions={len(jobs)}; task order={self.config.task_order}; "
+            f"historical timings={scheduling['known_tasks']}/{len(tasks)}"
+        )
+        trajectories = await execute_candidates(self.target, jobs)
+        measurements = {}
+        # All executions finish before grading/selection. Preserve generation
+        # order for records, cost estimates, history and equal-score tie breaks.
+        for variant, snapshot in candidates:
+            with progress_scope(f"candidate={variant + 1}/{self.config.m}"):
+                batches = tuple(
+                    self._grade_and_record(
+                        snapshot,
+                        tasks,
+                        trajectories[variant][
+                            trial * len(tasks) : (trial + 1) * len(tasks)
+                        ],
+                        label="candidate",
+                    )
+                    for trial in range(self.config.k)
+                )
+                try:
+                    measurements[variant] = self._summarize_measurement(
+                        snapshot,
+                        "candidate",
+                        batches,
+                        {**scheduling, "variant": variant},
+                    )
+                except _InvalidMeasurement as error:
+                    measurements[variant] = error
+        return measurements
 
     def _refresh_task_duration_estimates(self):
         estimates = getattr(self, "_task_duration_estimates", {}).copy()
