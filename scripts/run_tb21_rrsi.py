@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 # Execute the current checkout, including its concurrency/timeout support.
 from flashrsi._launch import _load, _plan, _validate_host, _validate_roles  # noqa: E402
 from flashrsi._progress import MODES  # noqa: E402
-from flashrsi._records import _redact, _secrets  # noqa: E402
+from flashrsi._records import _config_record, _redact, _secrets  # noqa: E402
 from flashrsi.algorithms import RRSI  # noqa: E402
 from flashrsi.benchmarks.terminal_bench import TerminalBench  # noqa: E402
 
@@ -144,9 +144,13 @@ def experiment_plan(config):
                 ("worker", config.algorithm.worker),
             )
         },
-        "rrsi": {
-            key: value for key, value in params.items() if key not in {"worker", "name"}
-        },
+        "rrsi": _config_record(
+            {
+                key: value
+                for key, value in params.items()
+                if key not in {"worker", "name"}
+            }
+        ),
         "target_task_execution_budget": {
             "baseline": baseline,
             "candidate_measurements_max": measurements,
@@ -297,8 +301,10 @@ def main(argv=None):
                         "n_success_traces", RRSI._defaults["n_success_traces"]
                     ),
                 )
+        # Check mode must validate the same serialization that run will persist.
+        serialized_plan = json.dumps(plan, ensure_ascii=False, indent=2)
         if args.mode == "plan":
-            print(json.dumps(plan, ensure_ascii=False, indent=2))
+            print(serialized_plan)
             return 0
 
         logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -318,7 +324,7 @@ def main(argv=None):
         plans.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         plan_path = plans / f"{stamp}.json"
-        plan_path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n")
+        plan_path.write_text(serialized_plan + "\n")
         print(f"Experiment plan: {plan_path}", flush=True)
         run_dir, result = asyncio.run(execute(config, resume))
         print(f"Completed: {run_dir}")
