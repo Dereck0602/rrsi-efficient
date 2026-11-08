@@ -432,7 +432,6 @@ class RRSI(Algorithm):
         self._pending_task_durations = {}
 
     async def _measure(self, snapshot, label):
-        trials = []
         resume = (
             getattr(self, "_baseline_resume", None) if label == "baseline" else None
         )
@@ -476,26 +475,25 @@ class RRSI(Algorithm):
                 )
                 for trial in range(self.config.k)
             )
-        for trial in range(self.config.k):
-            with progress_scope(f"repeat={trial + 1}/{self.config.k}"):
-                if resume is None:
-                    results = batches[trial]
-                else:
-                    results = resume.batches[trial]
-                    self._save_snapshot(snapshot)
-                    self._record(
-                        label,
-                        {
-                            "snapshot_id": snapshot.id,
-                            "trajectories": [
-                                _trajectory_record(row) for row in results
-                            ],
-                            "reused_from": str(resume.source),
-                        },
-                    )
-                    progress_note(
-                        f"baseline restored: tasks={len(results)}/{len(results)}"
-                    )
+        else:
+            batches = resume.batches
+            for results in batches:
+                self._save_snapshot(snapshot)
+                self._record(
+                    label,
+                    {
+                        "snapshot_id": snapshot.id,
+                        "trajectories": [_trajectory_record(row) for row in results],
+                        "reused_from": str(resume.source),
+                    },
+                )
+                progress_note(f"baseline restored: tasks={len(results)}/{len(results)}")
+        return self._summarize_measurement(snapshot, label, batches, scheduling)
+
+    def _summarize_measurement(self, snapshot, label, batches, scheduling):
+        """Use the same scoring/cost rules for serial and shared-queue results."""
+        trials = []
+        for trial, results in enumerate(batches):
             scores = results.per_task
             for trajectory in results:
                 score = scores[trajectory.task.task_id]
