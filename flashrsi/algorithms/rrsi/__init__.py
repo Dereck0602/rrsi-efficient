@@ -30,6 +30,11 @@ from flashrsi.algorithms.rrsi._candidate_queue import (
     execute_candidates,
 )
 from flashrsi.algorithms.rrsi._cost import estimate_cost, selection_cost
+from flashrsi.algorithms.rrsi._pipeline import (
+    GENERATION,
+    generate_candidates,
+    smoke_rollout,
+)
 from flashrsi.algorithms.rrsi._scheduling import execution_seconds, task_schedule
 from flashrsi.algorithms.rrsi._worker_budget import (
     WorkerOutputBudgetExhausted,
@@ -119,6 +124,8 @@ class RRSI(Algorithm):
         "digest_concurrency": 1,
         "task_order": "fifo",
         "shared_candidate_queue": False,
+        "proposal_concurrency": 1,
+        "pipeline_evaluation": False,
         "cost_policy": "complete",
         "cost_estimate_max_frac": 0.25,
         "component_signals": {},
@@ -152,6 +159,8 @@ class RRSI(Algorithm):
         "digest_concurrency": (int, 1),
         "task_order": ("fifo", "longest_first"),
         "shared_candidate_queue": bool,
+        "proposal_concurrency": (int, 1),
+        "pipeline_evaluation": bool,
         "cost_policy": ("complete", "estimate"),
         "cost_estimate_max_frac": (float, 0),
     }
@@ -283,17 +292,19 @@ class RRSI(Algorithm):
                         evidence = max(
                             (self._run_dir / "trajectories").glob("*-rrsi-context.json")
                         )
-                        proposals = [
-                            await self._propose_candidate(
-                                current, variant, context, evidence
+                        proposals, measurements = [], None
+                        if not analysis_failure:
+                            proposals, measurements = await generate_candidates(
+                                self, current, context, evidence
                             )
-                            for variant in range(
-                                0 if analysis_failure else self.config.m
-                            )
-                        ]
                         previous_id = current.id
                         current, incumbent = await self._select(
-                            current, incumbent, proposals, context, history
+                            current,
+                            incumbent,
+                            proposals,
+                            context,
+                            history,
+                            measurements=measurements,
                         )
                         if incumbent["score"] > best_score:
                             best_snapshot_id = current.id
@@ -344,6 +355,16 @@ class RRSI(Algorithm):
                 best_score=best_score,
                 delta=delta,
             )
+
+    def _record(self, label, payload):
+        generation = GENERATION.get()
+        if label == "worker" and generation is not None:
+            payload = {
+                **payload,
+                "step": generation.step,
+                "variant": generation.variant,
+            }
+        super()._record(label, payload)
 
     async def _propose_candidate(self, parent, variant, context, evidence):
         with progress_scope(f"candidate={variant + 1}/{self.config.m}"):
@@ -985,7 +1006,13 @@ class RRSI(Algorithm):
         tasks = [task for task in self.benchmark.train if task.task_id in traces][
             : self.config.smoke_n
         ]
-        smoke = await self._evaluate(snapshot, tasks, label="smoke") if tasks else ()
+        generation = GENERATION.get()
+        if tasks and generation is not None:
+            smoke = await smoke_rollout(self, snapshot, tasks, generation)
+        else:
+            smoke = (
+                await self._evaluate(snapshot, tasks, label="smoke") if tasks else ()
+            )
         failure = "smoke failed" if any(row.status == "error" for row in smoke) else ""
         self._record(
             "smoke-gate",
@@ -1013,6 +1040,8 @@ class RRSI(Algorithm):
             or self.worker.config.get("type", "agent") != "agent"
         ):
             raise ValueError("RRSI requires a separate file-editing Agent Worker")
+        if config.pipeline_evaluation and not config.shared_candidate_queue:
+            raise ValueError("pipeline_evaluation requires shared_candidate_queue")
         if config.b_min > config.b_max:
             raise ValueError("RRSI b_min must not exceed b_max")
         if config.m_draft > config.m:

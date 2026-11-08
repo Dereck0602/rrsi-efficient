@@ -52,6 +52,10 @@ algorithm:
   task_order: longest_first
   # All eligible candidates share the Target's 8 task slots in each round.
   shared_candidate_queue: true
+  # Generate siblings independently; ready candidates enter evaluation immediately.
+  # Smoke and full evaluation share 8 Target slots; up to 2 Worker phases overlap.
+  proposal_concurrency: 2
+  pipeline_evaluation: true
   # Retry a truncated Worker phase once at the same output budget, then skip it.
   worker_output_retries: 1
   # Keep provider counters separate; compare candidate-high / incumbent-low

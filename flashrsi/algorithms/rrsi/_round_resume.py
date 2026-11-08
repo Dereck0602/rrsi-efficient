@@ -45,6 +45,8 @@ class RoundOneResume:
             "digest_concurrency",
             "task_order",
             "shared_candidate_queue",
+            "proposal_concurrency",
+            "pipeline_evaluation",
             "invalid_missing_frac",
             "cost_policy",
             "cost_estimate_max_frac",
@@ -115,6 +117,8 @@ class RoundOneResume:
         ]
         self.cost_policy_before = old_config["cost_policy"]
         self.shared_candidate_queue_before = old_config["shared_candidate_queue"]
+        self.proposal_concurrency_before = old_config["proposal_concurrency"]
+        self.pipeline_evaluation_before = old_config["pipeline_evaluation"]
         self.config = new_config
         self.state = None
 
@@ -358,6 +362,10 @@ class RoundOneResume:
             "cost_policy_after": self.config["cost_policy"],
             "shared_candidate_queue_before": self.shared_candidate_queue_before,
             "shared_candidate_queue_after": self.config["shared_candidate_queue"],
+            "proposal_concurrency_before": self.proposal_concurrency_before,
+            "proposal_concurrency_after": self.config["proposal_concurrency"],
+            "pipeline_evaluation_before": self.pipeline_evaluation_before,
+            "pipeline_evaluation_after": self.config["pipeline_evaluation"],
             "original_round_summary": self.original_summary,
             "selected_snapshot_id": self.state["current"].id if self.state else None,
             "decisions": getattr(self, "decisions", []),

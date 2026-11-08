@@ -192,6 +192,8 @@ class EvaluationQueue:
             self._futures.difference_update(futures)
 
     def _fail(self, error):
+        if self._error is not None:
+            return
         self._error = error
         # Wake every producer, including ones waiting for smoke. The round's
         # gather then cancels proposal processes as well as evaluation tasks.
@@ -217,10 +219,11 @@ class EvaluationQueue:
             )
             self.progress.start(label)
             status = "error"
-            token = self.target._execution.set(
-                _Execution(job.snapshot, None, copy.deepcopy(self.config))
-            )
+            token = None
             try:
+                token = self.target._execution.set(
+                    _Execution(job.snapshot, None, copy.deepcopy(self.config))
+                )
                 if self.on_dispatch is not None:
                     self.on_dispatch(job)
                 # Existing adapter hooks and their timers/deadlines start only
@@ -233,14 +236,19 @@ class EvaluationQueue:
                 status = rows[0].status
                 if not future.done():
                     future.set_result(rows[0])
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as error:
                 status = "cancelled"
+                # An adapter can cancel itself. Wake submitters instead of
+                # silently losing a worker while their futures wait forever.
+                if not self._closed:
+                    self._fail(error)
                 raise
             except Exception as error:
                 self._fail(error)
                 return
             finally:
-                self.target._execution.reset(token)
+                if token is not None:
+                    self.target._execution.reset(token)
                 self.progress.finish(label, status)
 
 

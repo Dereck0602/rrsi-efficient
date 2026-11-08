@@ -59,6 +59,8 @@ class BaselineResume:
             values.pop("digest_concurrency", None)
             values.pop("task_order", None)
             values.pop("shared_candidate_queue", None)
+            values.pop("proposal_concurrency", None)
+            values.pop("pipeline_evaluation", None)
             values.pop("cost_policy", None)
             values.pop("cost_estimate_max_frac", None)
         if _redact_config(old_algorithm) != _redact_config(new_algorithm):
@@ -106,6 +108,18 @@ class BaselineResume:
         )
         self.shared_candidate_queue_after = config.algorithm.get(
             "shared_candidate_queue", False
+        )
+        self.proposal_concurrency_before = previous["algorithm"].get(
+            "proposal_concurrency", 1
+        )
+        self.proposal_concurrency_after = config.algorithm.get(
+            "proposal_concurrency", 1
+        )
+        self.pipeline_evaluation_before = previous["algorithm"].get(
+            "pipeline_evaluation", False
+        )
+        self.pipeline_evaluation_after = config.algorithm.get(
+            "pipeline_evaluation", False
         )
         self.batches = None
 
@@ -175,6 +189,10 @@ class BaselineResume:
             "task_order_after": self.task_order_after,
             "shared_candidate_queue_before": self.shared_candidate_queue_before,
             "shared_candidate_queue_after": self.shared_candidate_queue_after,
+            "proposal_concurrency_before": self.proposal_concurrency_before,
+            "proposal_concurrency_after": self.proposal_concurrency_after,
+            "pipeline_evaluation_before": self.pipeline_evaluation_before,
+            "pipeline_evaluation_after": self.pipeline_evaluation_after,
             "usage_note": "Inherited baseline usage is included once; no new baseline inference.",
         }
 

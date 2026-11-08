@@ -66,8 +66,8 @@ Measurement records include the planned `scheduling` order and per-trial
 
 Set `shared_candidate_queue: true` to share those same Target slots across all
 eligible candidates in a round. The default is `false`, retaining serial
-candidate evaluation; the TB2.1 DeepSeek example enables it. Proposals and smoke
-checks finish first. The shared queue interleaves candidates at each slot of the
+candidate evaluation; the TB2.1 DeepSeek example enables it. With pipelining off,
+proposals and smoke checks finish first. The shared queue interleaves candidates at each slot of the
 existing repeat/task schedule, using the same frozen historical estimates for
 all candidates. `longest_first` prioritizes estimated slow tasks; ties retain
 repeat/task order with candidates in generation order. Unknown durations use
@@ -94,6 +94,46 @@ flag and record its before/after values. They do not recover a partial shared
 queue. Baseline, calibration, smoke and held-out evaluation keep their existing
 execution paths. Interleaving can change model load and stochastic outputs;
 this preserves the experiment's rules, not bitwise-identical model responses.
+
+`proposal_concurrency` (default 1) bounds independent candidate-generation phases,
+including edits, repairs, critic review, bounded output-budget retries and smoke.
+Every candidate keeps its original index and starts from the same incumbent,
+with a private checkout, a private copy of the frozen round context and a pinned
+Worker Snapshot/configuration. Worker calls retain separate harness exports,
+conversations and subprocesses. A completed candidate cannot change a sibling's
+evidence, budget, reserved exploration role or parent. Worker records identify
+the round and candidate. Generation releases its slot after the smoke gate,
+before waiting for full evaluation.
+
+`pipeline_evaluation: true` requires `shared_candidate_queue: true`. Eligible
+candidates submit all `N * k` jobs as soon as they finish generation. Full
+evaluation can overlap other candidates' generation, even with a generation
+limit of 1. With this flag off, parallel generation is still possible, but full
+evaluation waits for all proposals. The default remains off; the TB2.1 DeepSeek
+example enables it with `proposal_concurrency: 2`.
+
+Parallel generation and pipelining use one Target queue for **both smoke and
+full trials**. Waiting smoke jobs have priority, so generating candidates can
+finish their gates without waiting for an earlier candidate's whole evaluation.
+Full jobs use the same frozen task ranks and candidate-index tie breaks among
+currently ready jobs. New arrivals may reorder waiting jobs; they never preempt
+running jobs. The queue does not idle in anticipation of a future candidate.
+Each task's timer starts on dispatch; the slot is released after native cleanup.
+The example permits 8 Target tasks (smoke included) plus 2 generation phases,
+so Worker and Target requests can compete for model capacity. Actual speedup
+depends on model throughput and task durations.
+
+Compile/smoke failures and exhausted Worker output retries skip only that
+candidate. Other infrastructure failures and cancellation stop the pipeline and
+await cleanup of active Worker and Target executions. All eligible trials and
+generation phases must finish before canonical grading, cost estimation,
+attribution, selection or next-round timing updates. Candidate completion order
+never determines the equal-score winner. `candidate-ready` records gate outcomes;
+`candidate-queue` records each ready batch; `candidate-dispatch` records actual
+start order, phase, round, variant, Snapshot and trial identity. Queue progress
+counts submitted jobs and grows as candidates become ready. Supported baseline
+and round-one replay modes permit changing both options and record before/after
+values; partial-round pipeline recovery remains unsupported.
 
 ## Admission, ties, and final selection
 
@@ -172,6 +212,8 @@ Defaults belong under `algorithm`. RRSI rejects unknown algorithm options.
 | `k` | `2` | Repetitions per full train measurement, integer at least 1. |
 | `task_order` | `fifo` | Dispatch in canonical order or `longest_first` using previous-round task durations. |
 | `shared_candidate_queue` | `false` | Share Target concurrency across eligible candidates; restore canonical results before selection. |
+| `proposal_concurrency` | `1` | Maximum independent candidate-generation phases, including review, retries and smoke. |
+| `pipeline_evaluation` | `false` | Start evaluating ready candidates while siblings are generated; requires the shared queue. |
 | `m` | `2` | Sibling candidate slots per round, integer at least 1. |
 | `b_min` | `1` | Minimum mechanism-budget parameter, integer at least 1. |
 | `b_max` | `4` | Initial mechanism-budget parameter, integer at least `b_min`. |

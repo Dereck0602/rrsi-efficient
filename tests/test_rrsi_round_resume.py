@@ -37,7 +37,9 @@ def archived(monkeypatch, tmp_path, request):
         T=2,
         k=2,
         delta=0.1,
-        shared_candidate_queue=getattr(request, "param", False),
+        shared_candidate_queue=bool(getattr(request, "param", False)),
+        proposal_concurrency=2 if getattr(request, "param", False) == "pipeline" else 1,
+        pipeline_evaluation=getattr(request, "param", False) == "pipeline",
     )
     old.worker.config.llm.model_name = "offline-worker"
     old.worker.config.name = old.worker.name
@@ -123,13 +125,15 @@ def archived(monkeypatch, tmp_path, request):
     return old, current, config, calls, next_contexts
 
 
-@pytest.mark.parametrize("archived", [False, True], indirect=True)
+@pytest.mark.parametrize("archived", [False, True, "pipeline"], indirect=True)
 def test_reselection_resumes_second_round_without_new_baseline_or_first_round_trials(
     archived,
 ):
     old, current, config, calls, contexts = archived
     config.algorithm.shared_candidate_queue = True
     current.config.shared_candidate_queue = True
+    config.algorithm.proposal_concurrency = current.config.proposal_concurrency = 2
+    config.algorithm.pipeline_evaluation = current.config.pipeline_evaluation = True
     before = hashes(old._run_dir)
     resume = RoundOneResume(old._run_dir, config)
     resume.bind(current)
@@ -140,6 +144,16 @@ def test_reselection_resumes_second_round_without_new_baseline_or_first_round_tr
         is old.config.shared_candidate_queue
     )
     assert resume.metadata()["shared_candidate_queue_after"] is True
+    assert (
+        resume.metadata()["proposal_concurrency_before"]
+        == old.config.proposal_concurrency
+    )
+    assert resume.metadata()["proposal_concurrency_after"] == 2
+    assert (
+        resume.metadata()["pipeline_evaluation_before"]
+        is old.config.pipeline_evaluation
+    )
+    assert resume.metadata()["pipeline_evaluation_after"] is True
     assert resume.decisions[0]["admissible"]
     assert resume.decisions[0]["cost_comparison"] == "estimated_conservative"
     assert resume.revised[1]["cost_accounting"]["complete"] is False

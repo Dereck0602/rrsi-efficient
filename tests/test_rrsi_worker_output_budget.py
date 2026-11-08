@@ -35,9 +35,10 @@ def good_edit(prompt, directory):
     return [change()]
 
 
+@pytest.mark.parametrize("pipeline", [False, True])
 @pytest.mark.parametrize("stage", ["analyze", "digest", "propose", "critic"])
 def test_one_truncation_recovers_with_same_limits_and_fresh_checkout(
-    monkeypatch, tmp_path, stage
+    monkeypatch, tmp_path, stage, pipeline
 ):
     original = Worker._run
     failures, directories, configs = [], [], []
@@ -58,7 +59,14 @@ def test_one_truncation_recovers_with_same_limits_and_fresh_checkout(
         return await original(self, prompt, working_dir)
 
     monkeypatch.setattr(Worker, "_run", run)
-    algo, calls = setup(monkeypatch, tmp_path, good_edit)
+    algo, calls = setup(
+        monkeypatch,
+        tmp_path,
+        good_edit,
+        proposal_concurrency=2 if pipeline else 1,
+        shared_candidate_queue=pipeline,
+        pipeline_evaluation=pipeline,
+    )
     algo.worker.config.llm.update(
         max_tokens=16384,
         reasoning_effort="high",
@@ -93,9 +101,10 @@ def test_one_truncation_recovers_with_same_limits_and_fresh_checkout(
     assert "target-private-secret" not in recorded
 
 
+@pytest.mark.parametrize("pipeline", [False, True])
 @pytest.mark.parametrize("retries", [0, 1])
 def test_exhausted_candidate_is_skipped_but_siblings_and_rounds_continue(
-    monkeypatch, tmp_path, retries
+    monkeypatch, tmp_path, retries, pipeline
 ):
     original = Worker._run
     failures = []
@@ -116,6 +125,9 @@ def test_exhausted_candidate_is_skipped_but_siblings_and_rounds_continue(
         m=2,
         repair_rounds=5,
         worker_output_retries=retries,
+        proposal_concurrency=2 if pipeline else 1,
+        shared_candidate_queue=pipeline,
+        pipeline_evaluation=pipeline,
     )
     result = asyncio.run(algo.evolve())
 
@@ -134,8 +146,11 @@ def test_exhausted_candidate_is_skipped_but_siblings_and_rounds_continue(
     assert not list((algo._run_dir / "working").iterdir())
 
 
+@pytest.mark.parametrize("pipeline", [False, True])
 @pytest.mark.parametrize("stage", ["analyze", "digest"])
-def test_exhausted_analysis_skips_only_that_round(monkeypatch, tmp_path, stage):
+def test_exhausted_analysis_skips_only_that_round(
+    monkeypatch, tmp_path, stage, pipeline
+):
     original = Worker._run
     failures = 0
 
@@ -147,7 +162,15 @@ def test_exhausted_analysis_skips_only_that_round(monkeypatch, tmp_path, stage):
         return await original(self, prompt, working_dir)
 
     monkeypatch.setattr(Worker, "_run", run)
-    algo, _ = setup(monkeypatch, tmp_path, good_edit, T=2)
+    algo, _ = setup(
+        monkeypatch,
+        tmp_path,
+        good_edit,
+        T=2,
+        proposal_concurrency=2 if pipeline else 1,
+        shared_candidate_queue=pipeline,
+        pipeline_evaluation=pipeline,
+    )
     seed_id = algo.target.snapshot.id
     result = asyncio.run(algo.evolve())
 
@@ -166,7 +189,8 @@ def test_exhausted_analysis_skips_only_that_round(monkeypatch, tmp_path, stage):
     assert not list((algo._run_dir / "working").iterdir())
 
 
-def test_all_candidates_exhausted_retains_incumbent(monkeypatch, tmp_path):
+@pytest.mark.parametrize("pipeline", [False, True])
+def test_all_candidates_exhausted_retains_incumbent(monkeypatch, tmp_path, pipeline):
     original = Worker._run
 
     async def run(self, prompt, working_dir=None):
@@ -175,7 +199,16 @@ def test_all_candidates_exhausted_retains_incumbent(monkeypatch, tmp_path):
         return await original(self, prompt, working_dir)
 
     monkeypatch.setattr(Worker, "_run", run)
-    algo, _ = setup(monkeypatch, tmp_path, good_edit, T=2, m=2)
+    algo, _ = setup(
+        monkeypatch,
+        tmp_path,
+        good_edit,
+        T=2,
+        m=2,
+        proposal_concurrency=2 if pipeline else 1,
+        shared_candidate_queue=pipeline,
+        pipeline_evaluation=pipeline,
+    )
     seed_id = algo.target.snapshot.id
     assert asyncio.run(algo.evolve()).id == seed_id
     assert len(saved(algo, "measurement")) == 1  # Only the baseline was measured.
