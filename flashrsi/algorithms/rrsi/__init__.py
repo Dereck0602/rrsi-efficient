@@ -283,29 +283,14 @@ class RRSI(Algorithm):
                         evidence = max(
                             (self._run_dir / "trajectories").glob("*-rrsi-context.json")
                         )
-                        proposals = []
-                        for variant in range(0 if analysis_failure else self.config.m):
-                            with progress_scope(
-                                f"candidate={variant + 1}/{self.config.m}"
-                            ):
-                                progress_note("Worker: proposing harness edits")
-                                try:
-                                    proposal = await retry_worker_phase(
-                                        self,
-                                        "candidate",
-                                        partial(
-                                            self._propose,
-                                            current,
-                                            variant,
-                                            context,
-                                            evidence,
-                                        ),
-                                        step=step,
-                                        variant=variant,
-                                    )
-                                except WorkerOutputBudgetExhausted as error:
-                                    proposal = (None, [], "", str(error))
-                                proposals.append(proposal)
+                        proposals = [
+                            await self._propose_candidate(
+                                current, variant, context, evidence
+                            )
+                            for variant in range(
+                                0 if analysis_failure else self.config.m
+                            )
+                        ]
                         previous_id = current.id
                         current, incumbent = await self._select(
                             current, incumbent, proposals, context, history
@@ -360,16 +345,29 @@ class RRSI(Algorithm):
                 delta=delta,
             )
 
-    async def _select(self, parent, incumbent, proposals, context, history):
+    async def _propose_candidate(self, parent, variant, context, evidence):
+        with progress_scope(f"candidate={variant + 1}/{self.config.m}"):
+            progress_note("Worker: proposing harness edits")
+            try:
+                return await retry_worker_phase(
+                    self,
+                    "candidate",
+                    partial(self._propose, parent, variant, context, evidence),
+                    step=context["step"],
+                    variant=variant,
+                )
+            except WorkerOutputBudgetExhausted as error:
+                return None, [], "", str(error)
+
+    async def _select(
+        self, parent, incumbent, proposals, context, history, *, measurements=None
+    ):
         accepted = {row["component"] for row in history if row["accepted"]}
         start = len(history)
         winner, winning_measurement = None, None
         winning_variant = None
-        measurements = (
-            await self._measure_candidates(proposals, context["step"])
-            if self.config.shared_candidate_queue
-            else None
-        )
+        if measurements is None and self.config.shared_candidate_queue:
+            measurements = await self._measure_candidates(proposals, context["step"])
         for variant, (snapshot, edits, changes, reason) in enumerate(proposals):
             decision = {
                 "admissible": False,
@@ -469,6 +467,9 @@ class RRSI(Algorithm):
             f"historical timings={scheduling['known_tasks']}/{len(tasks)}"
         )
         trajectories = await execute_candidates(self.target, jobs)
+        return self._summarize_candidates(candidates, tasks, trajectories, scheduling)
+
+    def _summarize_candidates(self, candidates, tasks, trajectories, scheduling):
         measurements = {}
         # All executions finish before grading/selection. Preserve generation
         # order for records, cost estimates, history and equal-score tie breaks.
