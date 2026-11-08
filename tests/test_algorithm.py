@@ -246,7 +246,13 @@ def test_shared_evaluation_records_scores_without_selecting_candidate(
     recorded = json.loads(path.read_text())
     assert recorded["snapshot_id"] == candidate.id
     assert recorded["trajectories"][0]["usage"] == {"tokens": 5}
-    assert recorded["trajectories"][0]["messages"][0]["snapshot_id"] == candidate.id
+    # Timing metadata can precede RunConfig when the backend has no messages.
+    (run_config,) = (
+        message
+        for message in recorded["trajectories"][0]["messages"]
+        if message.get("type") == "RunConfig"
+    )
+    assert run_config["snapshot_id"] == candidate.id
 
 
 def test_worker_questions_are_recorded_and_redacted_against_both_roles(
