@@ -1,0 +1,76 @@
+# Local TB2.1 experiment. Run scripts/run_tb21_rrsi.sh plan/check/run.
+# Paths are relative to this YAML. No inference is performed by plan or check.
+run:
+  output_dir: ../runs/tb21-rrsi-deepseek
+  progress: auto
+
+benchmark:
+  name: terminal_bench
+  version: "2.1"
+  data_path: ../../terminal-bench-2.1/dataset/tasks
+  seed: 42
+  split_counts:
+    train: 30
+    dev: 0
+    test: 59
+
+agent:
+  name: miniagent
+  concurrency: 8
+  max_turns: 200
+  # Do not set agent.timeout: the floor must retain larger native deadlines.
+  harbor:
+    agent_min_timeout: 3600
+    setup_timeout: 600
+    cleanup_grace: 30
+    verifier_dependencies_manifest: ../runs/tb21-verifier-images/manifest.json
+    agent_runtime_cache_dir: ../runs/tb21-agent-runtime-images/shared/4692d24fcaf123b3a8926b2f5081114d56f9cc518747ba04cf18e859f23722ce/flashrsi-runtime-cache
+  llm:
+    model_name: deepseek-v4.1-flash
+    api_key: local-no-auth
+    # Docker bridge gateway on this machine; localhost would mean the task container.
+    base_url: http://172.17.0.1:30166/v1
+    max_tokens: 16384
+    reasoning_effort: high
+    llm_max_retries: 1
+    extra_body:
+      temperature: 1.0
+      chat_template_kwargs:
+        enable_thinking: true
+
+algorithm:
+  name: rrsi
+  # Match the implementation defaults, not the shorter SearchQA example.
+  T: 20
+  k: 2
+  m: 2
+  delta: null
+  seed: 7
+  smoke_n: 2
+  invalid_missing_frac: 0.25
+  digest_concurrency: 8
+  task_order: longest_first
+  # Retry a truncated Worker phase once at the same output budget, then skip it.
+  worker_output_retries: 1
+  # Keep provider counters separate; compare candidate-high / incumbent-low
+  # heuristic sensitivity costs when at most 25% of trials need estimation.
+  cost_policy: estimate
+  cost_estimate_max_frac: 0.25
+  worker:
+    type: agent
+    name: miniagent
+    max_turns: 30
+    timeout: 3600
+    llm:
+      model_name: deepseek-v4.1-flash
+      api_key: local-no-auth
+      base_url: http://127.0.0.1:30166/v1
+      max_tokens: 16384
+      reasoning_effort: high
+      # At most 3 attempts per Worker request, with 2s / 4s backoff.
+      llm_max_retries: 3
+      llm_retry_policy: transient
+      extra_body:
+        temperature: 1.0
+        chat_template_kwargs:
+          enable_thinking: true

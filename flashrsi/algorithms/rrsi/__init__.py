@@ -6,7 +6,9 @@ be50316e1db05914068a973f322770ef08ed7ba1; see docs/rrsi.md.
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import math
 import random
 import re
@@ -14,12 +16,21 @@ import shutil
 from collections.abc import Mapping
 from contextlib import ExitStack
 from difflib import unified_diff
+from functools import partial
 from pathlib import Path
 from statistics import mean, pstdev, stdev
 from tempfile import TemporaryDirectory
 
+from flashrsi._progress import Progress, progress_note, progress_scope
+from flashrsi._records import _trajectory_record
 from flashrsi.algorithms import _replies
 from flashrsi.algorithms.rrsi import _prompts as prompts
+from flashrsi.algorithms.rrsi._cost import estimate_cost, selection_cost
+from flashrsi.algorithms.rrsi._scheduling import execution_seconds, task_schedule
+from flashrsi.algorithms.rrsi._worker_budget import (
+    WorkerOutputBudgetExhausted,
+    retry_worker_phase,
+)
 from flashrsi.core import Algorithm, Snapshot
 from flashrsi.core.snapshot import discard_runtime_files
 
@@ -59,6 +70,7 @@ _STRUCTURAL = {"client_tool", "skill", "memory", "subagent"}
 _ANALYSIS_MAX_TURNS = 30
 _DIGEST_MAX_CHARS = 6000
 _PROTOCOL_RETRIES = 3
+_LOGGER = logging.getLogger(__name__)
 
 
 class _InvalidMeasurement(ValueError):
@@ -93,12 +105,17 @@ class RRSI(Algorithm):
         "w_n": 0.5,
         "n_prune": 4,
         "repair_rounds": 5,
+        "worker_output_retries": 1,
         "invalid_missing_frac": 0.15,
         "seed": 7,
         "n_fail_traces": 22,
         "n_success_traces": 6,
         "calibration_evals": 1,
         "smoke_n": 2,
+        "digest_concurrency": 1,
+        "task_order": "fifo",
+        "cost_policy": "complete",
+        "cost_estimate_max_frac": 0.25,
         "component_signals": {},
         "weight_metric": None,
         "guards": {},
@@ -120,16 +137,22 @@ class RRSI(Algorithm):
         "w_n": (float, 0),
         "n_prune": (int, 1),
         "repair_rounds": (int, 0),
+        "worker_output_retries": (int, 0),
         "invalid_missing_frac": (float, 0),
         "seed": int,
         "n_fail_traces": (int, 0),
         "n_success_traces": (int, 0),
         "calibration_evals": (int, 1),
         "smoke_n": (int, 0),
+        "digest_concurrency": (int, 1),
+        "task_order": ("fifo", "longest_first"),
+        "cost_policy": ("complete", "estimate"),
+        "cost_estimate_max_frac": (float, 0),
     }
 
     async def evolve(self) -> Snapshot:
         with ExitStack() as resources:
+            resources.enter_context(progress_scope("RRSI"))
             resources.callback(setattr, self, "_run_dir", self._run_dir)
             if self._run_dir is None:
                 self._run_dir = Path(resources.enter_context(TemporaryDirectory()))
@@ -137,67 +160,196 @@ class RRSI(Algorithm):
                     (self._run_dir / name).mkdir()
 
             current = seed = self.target.snapshot
-            incumbent = await self._measure(current, "baseline")
-            delta = self.config.delta
-            if delta is None:
-                evaluations = [incumbent]
-                for _ in range(self.config.calibration_evals - 1):
-                    evaluations.append(await self._measure(current, "calibration-eval"))
-                calibration = _calibrate(
-                    evaluations, self.config.delta_z, self.config.seed
+            self._task_duration_estimates = {}
+            self._pending_task_durations = {}
+            start_step = 0
+            round_resume = getattr(self, "_round_resume", None)
+            if round_resume is not None:
+                state = round_resume.restore(self)
+                current, incumbent = state["current"], state["incumbent"]
+                delta, baseline_score = state["delta"], state["baseline_score"]
+                best_score, best_snapshot_id = (
+                    state["best_score"],
+                    state["best_snapshot_id"],
                 )
-                delta = calibration["delta"]
+                scores, history, analysis = (
+                    state["scores"],
+                    state["history"],
+                    state["analysis"],
+                )
+                start_step = state["start_step"]
+                progress_note(
+                    f"Restored/reselected round=1; current={incumbent['score']:.2%}; "
+                    f"best={best_score:.2%}; snapshot={current.id}; continuing at round=2"
+                )
+                for decision in round_resume.decisions:
+                    _LOGGER.info(
+                        "RRSI replay candidate=%d decision=%s",
+                        decision["variant"] + 1,
+                        json.dumps(decision),
+                    )
             else:
-                calibration = {"delta": delta, "source": "configured", "n_evals": 0}
-            self._record("calibration", calibration)
-            best_score = incumbent["score"]
-            scores, history = [best_score], []
-            analysis = {"failure_modes": [], "success_habits": []}
+                resume = getattr(self, "_baseline_resume", None)
+                if resume is not None:
+                    resume.record(
+                        self._run_dir,
+                        {"target": self.target.config, "worker": self.worker.config},
+                    )
+                    progress_note(
+                        f"Restoring {sum(len(batch) for batch in resume.batches)} baseline trials; "
+                        "no baseline inference; continuing at round=1"
+                    )
+                incumbent = await self._measure(current, "baseline")
+                delta = self.config.delta
+                if delta is None:
+                    evaluations = [incumbent]
+                    for _ in range(self.config.calibration_evals - 1):
+                        evaluations.append(
+                            await self._measure(current, "calibration-eval")
+                        )
+                    calibration = _calibrate(
+                        evaluations, self.config.delta_z, self.config.seed
+                    )
+                    delta = calibration["delta"]
+                else:
+                    calibration = {"delta": delta, "source": "configured", "n_evals": 0}
+                self._record("calibration", calibration)
+                baseline_score = incumbent["score"]
+                best_score = incumbent["score"]
+                best_snapshot_id = current.id
+                scores, history = [best_score], []
+                analysis = {"failure_modes": [], "success_habits": []}
 
-            for step in range(self.config.T):
-                traces = _select_traces(
-                    incumbent, self.config.n_fail_traces, self.config.n_success_traces
-                )
-                analysis = await self._analyze(
-                    current.id,
-                    traces,
-                    {key: analysis[key] for key in ("failure_modes", "success_habits")},
-                )
-                context = {
-                    "step": step,
-                    "incumbent_id": current.id,
-                    "score": incumbent["score"],
-                    "cost": incumbent["cost"],
-                    "best_score": best_score,
-                    "delta": delta,
-                    "budget": _edit_budget(step, self.config),
-                    "analysis": analysis,
-                    "traces": {
-                        task: trace["evidence"] for task, trace in traces.items()
-                    },
-                    "history": history,
-                    **_directives(history, scores, step, delta, self.config),
-                }
-                self._record("rrsi-context", context)
-                # Every sibling reads this fixed, framework-redacted record.
-                evidence = max(
-                    (self._run_dir / "trajectories").glob("*-rrsi-context.json")
-                )
-                proposals = [
-                    await self._propose(current, variant, context, evidence)
-                    for variant in range(self.config.m)
-                ]
-                current, incumbent = await self._select(
-                    current, incumbent, proposals, context, history
-                )
-                best_score = max(best_score, incumbent["score"])
-                scores.append(incumbent["score"])
+            async with Progress(self.config.T - start_step, unit="rounds") as rounds:
+                for step in range(start_step, self.config.T):
+                    # Freeze one estimate per task for all sibling candidates.
+                    # Round 1 uses baseline/calibration; later rounds use all
+                    # completed candidate measurements from the previous round.
+                    self._refresh_task_duration_estimates()
+                    round_label = f"round={step + 1}/{self.config.T}"
+                    rounds.start(round_label)
+                    with progress_scope(round_label):
+                        traces = _select_traces(
+                            incumbent,
+                            self.config.n_fail_traces,
+                            self.config.n_success_traces,
+                        )
+                        progress_note("Worker: analyzing trajectories")
+                        analysis_failure = None
+                        try:
+                            analysis = await retry_worker_phase(
+                                self,
+                                "analysis",
+                                partial(
+                                    self._analyze,
+                                    current.id,
+                                    traces,
+                                    {
+                                        key: analysis[key]
+                                        for key in ("failure_modes", "success_habits")
+                                    },
+                                ),
+                                step=step,
+                            )
+                        except WorkerOutputBudgetExhausted as error:
+                            analysis_failure = str(error)
+                        context = {
+                            "step": step,
+                            "incumbent_id": current.id,
+                            "score": incumbent["score"],
+                            "cost": incumbent["cost"],
+                            "cost_accounting": incumbent["cost_accounting"],
+                            "best_score": best_score,
+                            "delta": delta,
+                            "budget": _edit_budget(step, self.config),
+                            "analysis": analysis,
+                            "traces": {
+                                task: trace["evidence"]
+                                for task, trace in traces.items()
+                            },
+                            "history": history,
+                            **_directives(history, scores, step, delta, self.config),
+                        }
+                        if analysis_failure:
+                            context["skipped_reason"] = analysis_failure
+                        self._record("rrsi-context", context)
+                        # Every sibling reads this fixed, redacted record.
+                        evidence = max(
+                            (self._run_dir / "trajectories").glob("*-rrsi-context.json")
+                        )
+                        proposals = []
+                        for variant in range(0 if analysis_failure else self.config.m):
+                            with progress_scope(
+                                f"candidate={variant + 1}/{self.config.m}"
+                            ):
+                                progress_note("Worker: proposing harness edits")
+                                try:
+                                    proposal = await retry_worker_phase(
+                                        self,
+                                        "candidate",
+                                        partial(
+                                            self._propose,
+                                            current,
+                                            variant,
+                                            context,
+                                            evidence,
+                                        ),
+                                        step=step,
+                                        variant=variant,
+                                    )
+                                except WorkerOutputBudgetExhausted as error:
+                                    proposal = (None, [], "", str(error))
+                                proposals.append(proposal)
+                        previous_id = current.id
+                        current, incumbent = await self._select(
+                            current, incumbent, proposals, context, history
+                        )
+                        if incumbent["score"] > best_score:
+                            best_snapshot_id = current.id
+                        best_score = max(best_score, incumbent["score"])
+                        scores.append(incumbent["score"])
+                        summary = {
+                            "round": step + 1,
+                            "rounds": self.config.T,
+                            "current_score": incumbent["score"],
+                            "best_score": best_score,
+                            "baseline_score": baseline_score,
+                            "gain_from_baseline": best_score - baseline_score,
+                            "current_snapshot_id": current.id,
+                            "best_snapshot_id": best_snapshot_id,
+                            "accepted_candidate": current.id != previous_id,
+                            "current_error_trials": incumbent["error_trials"],
+                            "trials_total": len(incumbent["evidence"]),
+                            "delta": delta,
+                        }
+                        if analysis_failure:
+                            summary.update(status="skipped", reason=analysis_failure)
+                        self._record("round-summary", summary)
+                        _LOGGER.info(
+                            "RRSI round=%d/%d complete | evolve current=%.2f%% "
+                            "best=%.2f%% baseline=%.2f%% gain=%+.2fpp | "
+                            "accepted=%s current_errors=%d/%d | "
+                            "current_snapshot=%s best_snapshot=%s",
+                            step + 1,
+                            self.config.T,
+                            incumbent["score"] * 100,
+                            best_score * 100,
+                            baseline_score * 100,
+                            (best_score - baseline_score) * 100,
+                            "yes" if summary["accepted_candidate"] else "no",
+                            summary["current_error_trials"],
+                            summary["trials_total"],
+                            current.id[:12],
+                            best_snapshot_id[:12],
+                        )
+                    rounds.finish(round_label)
 
             return self._promote(
                 seed,
                 current,
                 score=incumbent["score"],
                 cost=incumbent["cost"],
+                cost_accounting=incumbent["cost_accounting"],
                 best_score=best_score,
                 delta=delta,
             )
@@ -217,7 +369,8 @@ class RRSI(Algorithm):
             feedback = []
             if snapshot is not None:
                 try:
-                    measurement = await self._measure(snapshot, "candidate")
+                    with progress_scope(f"candidate={variant + 1}/{self.config.m}"):
+                        measurement = await self._measure(snapshot, "candidate")
                 except _InvalidMeasurement as error:
                     decision["reason"] = str(error)
                 else:
@@ -266,15 +419,96 @@ class RRSI(Algorithm):
 
         return (parent, incumbent) if winner is None else (winner, winning_measurement)
 
+    def _refresh_task_duration_estimates(self):
+        estimates = getattr(self, "_task_duration_estimates", {}).copy()
+        estimates.update(
+            {
+                task: mean(values)
+                for task, values in getattr(self, "_pending_task_durations", {}).items()
+                if values
+            }
+        )
+        self._task_duration_estimates = estimates
+        self._pending_task_durations = {}
+
     async def _measure(self, snapshot, label):
         trials = []
+        resume = (
+            getattr(self, "_baseline_resume", None) if label == "baseline" else None
+        )
+        self._baseline_resume = None
+        scheduling = {"policy": "restored_baseline"}
+        if resume is None:
+            tasks = tuple(self.benchmark.train)
+            self._save_snapshot(snapshot)
+            scheduling = task_schedule(
+                tasks,
+                self.config.k,
+                getattr(self, "_task_duration_estimates", {}),
+                self.config.task_order,
+            )
+            slots = tasks * self.config.k
+            order = [job["index"] for job in scheduling["jobs"]]
+            queued = tuple(slots[index] for index in order)
+            # One rollout pins one Snapshot/configuration and uses one semaphore
+            # across all repeats. A slow first repeat cannot hold up the next.
+            # Keep task IDs/checksums intact; every occurrence gets a fresh run.
+            with progress_scope(f"repeats={self.config.k}"), progress_scope(label):
+                progress_note(
+                    f"task order={self.config.task_order}; "
+                    f"historical timings={scheduling['known_tasks']}/{len(tasks)}; "
+                    f"executions={len(slots)}"
+                )
+                dispatched = await self.target.rollout(queued, snapshot=snapshot)
+            if tuple(row.task for row in dispatched) != queued:
+                raise ValueError("repeated rollout must preserve tasks and order")
+            trajectories = [None] * len(slots)
+            for index, trajectory in zip(order, dispatched, strict=True):
+                trajectories[index] = trajectory
+            # Results.per_task is keyed by task_id. Grade/record each repeat
+            # separately so no trial is overwritten, including its token usage.
+            batches = tuple(
+                self._grade_and_record(
+                    snapshot,
+                    tasks,
+                    tuple(trajectories[trial * len(tasks) : (trial + 1) * len(tasks)]),
+                    label=label,
+                )
+                for trial in range(self.config.k)
+            )
         for trial in range(self.config.k):
-            results = await self._evaluate(snapshot, self.benchmark.train, label=label)
+            with progress_scope(f"repeat={trial + 1}/{self.config.k}"):
+                if resume is None:
+                    results = batches[trial]
+                else:
+                    results = resume.batches[trial]
+                    self._save_snapshot(snapshot)
+                    self._record(
+                        label,
+                        {
+                            "snapshot_id": snapshot.id,
+                            "trajectories": [
+                                _trajectory_record(row) for row in results
+                            ],
+                            "reused_from": str(resume.source),
+                        },
+                    )
+                    progress_note(
+                        f"baseline restored: tasks={len(results)}/{len(results)}"
+                    )
             scores = results.per_task
             for trajectory in results:
                 score = scores[trajectory.task.task_id]
                 if not 0 <= score <= 1:
                     raise ValueError("RRSI requires primary scores in [0, 1]")
+                observed_tokens, usage_complete = _token_accounting(trajectory.usage)
+                duration = execution_seconds(trajectory)
+                if duration is not None:
+                    if not hasattr(self, "_pending_task_durations"):
+                        self._pending_task_durations = {}
+                    self._pending_task_durations.setdefault(
+                        trajectory.task.task_id, []
+                    ).append(duration)
                 trials.append(
                     {
                         "task_id": trajectory.task.task_id,
@@ -283,7 +517,10 @@ class RRSI(Algorithm):
                         "weight": trajectory.metrics.get(self.config.weight_metric)
                         if self.config.weight_metric
                         else 1.0,
-                        "tokens": _tokens(trajectory.usage),
+                        "tokens": observed_tokens if usage_complete else None,
+                        "observed_tokens": observed_tokens,
+                        "usage_complete": usage_complete,
+                        "execution_seconds": duration,
                         "trajectory": self._trajectory_evidence(trajectory),
                     }
                 )
@@ -305,34 +542,81 @@ class RRSI(Algorithm):
             guards[metric] = mean(values)
         costs = [row["tokens"] for row in trials]
         cost = mean(costs) if None not in costs else None
-        if cost is None or cost <= 0:
-            raise _InvalidMeasurement(
-                "complete positive policy-token accounting is required for every trial"
-            )
+        if cost is not None and cost <= 0:
+            cost = None  # Relative cost cannot use a zero denominator.
+        complete = sum(row["usage_complete"] for row in trials)
+        missing = sum(row["observed_tokens"] is None for row in trials)
+        observed = sum(row["observed_tokens"] or 0 for row in trials)
+        accounting = {
+            "complete": cost is not None,
+            "trials_total": len(trials),
+            "trials_complete": complete,
+            "trials_partial": len(trials) - complete - missing,
+            "trials_missing": missing,
+            "observed_tokens": observed,
+            "observed_mean_tokens": observed / len(trials),
+        }
         errors = sum(row["trajectory"]["status"] == "error" for row in trials)
-        if errors > self.config.invalid_missing_frac * len(trials):
-            raise _InvalidMeasurement("too many failed trials")
+        too_many_errors = errors > self.config.invalid_missing_frac * len(trials)
+        warnings = []
+        if cost is None:
+            warnings.append(
+                "token cost unavailable: "
+                f"{complete}/{len(trials)} trials have complete usage; "
+                "preserving observed tokens, comparison requires a clear score gain"
+            )
+        if too_many_errors:
+            warnings.append(f"too many failed trials: {errors}/{len(trials)}")
         measurement = {
             "score": score,
+            "scheduling": scheduling,
             "cost": cost,
+            "cost_accounting": accounting,
+            "error_trials": errors,
+            "warnings": warnings,
             "per_task": per_task,
             "weights": weights,
             "guard_metrics": guards,
             "evidence": trials,
         }
+        estimate_cost(measurement, self.config)
+        estimate = accounting.get("estimate", {})
+        if estimate.get("eligible"):
+            warnings[:] = [
+                warning
+                for warning in warnings
+                if not warning.startswith("token cost unavailable:")
+            ]
+            _LOGGER.info(
+                "RRSI %s: selection token estimate=%.0f; estimated trials=%d/%d; "
+                "provider usage remains incomplete; applying conservative sensitivity cost",
+                label,
+                estimate["total_tokens"],
+                estimate["estimated_trials"],
+                len(trials),
+            )
+        for warning in warnings:
+            _LOGGER.warning("RRSI %s: %s", label, warning)
         self._record("measurement", {"snapshot_id": snapshot.id, **measurement})
         # Framework recording owns redaction, including full file evidence.
         record = max((self._run_dir / "trajectories").glob("*-measurement.json"))
         measurement["evidence"] = json.loads(record.read_text())["evidence"]
+        # Preserve the reliability gate: an invalid baseline aborts, while
+        # _select rejects an invalid candidate. Persist the evidence first.
+        if too_many_errors:
+            raise _InvalidMeasurement("too many failed trials")
         return measurement
 
-    async def _analyze(self, snapshot_id, traces, prior):
+    async def _analyze(self, snapshot_id, traces, prior, *, retry_note=""):
         table = [
             {key: value for key, value in trace.items() if key != "evidence"}
             for trace in traces.values()
         ]
         interaction, digests = [], []
-        for _ in range(_ANALYSIS_MAX_TURNS):
+        for analysis_turn in range(_ANALYSIS_MAX_TURNS):
+            progress_note(
+                f"Worker analyst: decision={analysis_turn + 1}/{_ANALYSIS_MAX_TURNS}"
+            )
             raw = await self.worker.ask(
                 prompts.ANALYZE.format(
                     incumbent=snapshot_id,
@@ -340,6 +624,7 @@ class RRSI(Algorithm):
                     prior=json.dumps(prior),
                     interaction=json.dumps(interaction),
                 )
+                + retry_note
             )
             try:
                 action = json.loads(_replies.tagged(raw, "ANALYSIS"))
@@ -382,20 +667,55 @@ class RRSI(Algorithm):
             except (ValueError, TypeError) as error:
                 interaction.append({"reply": raw, "error": str(error)})
                 continue
-            results = [
-                await self._digest(
-                    traces[request["task_id"]],
-                    request.get("lens", "failure"),
-                    request.get("questions", []),
-                )
-                for request in requests
-            ]
+            with progress_scope(f"analysis-batch={analysis_turn + 1}"):
+                results = await self._digest_many(requests, traces)
             digests.extend(results)
             interaction.append({"action": action, "results": results})
         raise ValueError("RRSI analyst exhausted its 30 turns without a report")
 
+    async def _digest_many(self, requests, traces):
+        """Run independent investigations concurrently, preserving request order."""
+        limit = self.config.digest_concurrency
+        progress_note(f"Worker digest batch: count={len(requests)} concurrency={limit}")
+        semaphore = asyncio.Semaphore(limit)
+        async with Progress(len(requests), unit="digests") as progress:
+
+            async def execute(request):
+                async with semaphore:
+                    task_id = request["task_id"]
+                    progress.start(task_id)
+                    status = "error"
+                    try:
+                        result = await self._digest(
+                            traces[task_id],
+                            request.get("lens", "failure"),
+                            request.get("questions", []),
+                        )
+                        status = "finished"
+                        return result
+                    except asyncio.CancelledError:
+                        status = "cancelled"
+                        raise
+                    finally:
+                        progress.finish(task_id, status)
+
+            if limit == 1:
+                return [await execute(request) for request in requests]
+            jobs = [asyncio.create_task(execute(request)) for request in requests]
+            try:
+                return list(await asyncio.gather(*jobs))
+            except BaseException:
+                # A failed digester must not leave other Worker subprocesses
+                # writing into directories that their contexts are removing.
+                for job in jobs:
+                    if not job.done() and not job.cancelling():
+                        job.cancel()
+                await asyncio.gather(*jobs, return_exceptions=True)
+                raise
+
     async def _digest(self, trace, lens, questions):
         """Keep trace investigation outside every target checkout."""
+        progress_note(f"Worker: digesting {trace['task_id']}")
         if not isinstance(lens, str) or lens not in prompts.DIGEST_SCHEMAS:
             lens = "failure"
         evidence = trace["evidence"]
@@ -461,7 +781,7 @@ class RRSI(Algorithm):
                     objection = str(error)
         raise ValueError(f"RRSI digest invalid: {objection}")
 
-    async def _propose(self, parent, variant, context, evidence_file):
+    async def _propose(self, parent, variant, context, evidence_file, *, retry_note=""):
         step, budget = context["step"], context["budget"]
         reserved = (
             context["untried"]
@@ -471,6 +791,9 @@ class RRSI(Algorithm):
         edits, changes, objection = [], "", ""
         with parent.check_out(working_dir=self._run_dir / "working") as directory:
             for attempt in range(self.config.repair_rounds + 1):
+                progress_note(
+                    f"Worker: edit attempt={attempt + 1}/{self.config.repair_rounds + 1}"
+                )
                 with TemporaryDirectory(
                     prefix="rrsi-evidence-", dir=directory
                 ) as temporary:
@@ -492,7 +815,8 @@ class RRSI(Algorithm):
                             permissions=json.dumps(dict(parent.component_rules)),
                             reserved=json.dumps(reserved),
                             objection=objection,
-                        ),
+                        )
+                        + retry_note,
                     )
                 discard_runtime_files(directory)
                 edits, changes = [], ""
@@ -549,6 +873,7 @@ class RRSI(Algorithm):
         return None, edits, changes, objection
 
     async def _review(self, payload):
+        progress_note("Worker: critic review")
         for _ in range(_PROTOCOL_RETRIES):
             raw = await self.worker.ask(payload)
             try:
@@ -620,6 +945,8 @@ class RRSI(Algorithm):
             raise ValueError("RRSI automatic noise calibration requires k >= 2")
         if config.invalid_missing_frac > 1:
             raise ValueError("RRSI invalid_missing_frac must be in [0, 1]")
+        if config.cost_estimate_max_frac > 1:
+            raise ValueError("RRSI cost_estimate_max_frac must be in [0, 1]")
         if config.n_fail_traces + config.n_success_traces == 0:
             raise ValueError("RRSI analysis requires at least one representative trace")
         if (
@@ -739,10 +1066,34 @@ def _calibrate(evaluations, z, seed):
 
 def _judge(measurement, incumbent, best_score, delta, edits, accepted, config):
     ds = measurement["score"] - incumbent["score"]
-    dc = (measurement["cost"] - incumbent["cost"]) / incumbent["cost"]
+    candidate_cost = selection_cost(measurement, config)
+    incumbent_cost = selection_cost(incumbent, config)
+    comparable = candidate_cost is not None and incumbent_cost is not None
+    estimated = comparable and "estimated" in (candidate_cost[3], incumbent_cost[3])
+    # For estimated costs, charge the candidate's high scenario against the
+    # incumbent's known lower bound. A favourable point estimate alone cannot win.
+    dc = (
+        (candidate_cost[2] - incumbent_cost[1]) / incumbent_cost[1]
+        if comparable
+        else None
+    )
+    dc_point = (
+        (candidate_cost[0] - incumbent_cost[0]) / incumbent_cost[0]
+        if comparable
+        else None
+    )
     novelty = len({edit["component"] for edit in edits} & _STRUCTURAL - accepted)
     if measurement["score"] < best_score - delta:
         admissible, reason = False, "below historical best minus noise band"
+    elif not comparable:
+        # Missing counters cannot earn a cost-saving or novelty-only promotion.
+        # Continue search using a clear measured gain; do not fabricate cost.
+        admissible = ds > delta
+        reason = (
+            "clear score gain with incomplete token accounting"
+            if admissible
+            else "no clear score gain with incomplete token accounting"
+        )
     elif ds > delta:
         admissible = dc <= config.beta0 + config.beta1 * ds
         reason = "gain/cost budget"
@@ -765,6 +1116,18 @@ def _judge(measurement, incumbent, best_score, delta, edits, accepted, config):
         "reason": reason,
         "delta_S": ds,
         "delta_C": dc,
+        "cost_comparison": "estimated_conservative"
+        if estimated
+        else "full"
+        if comparable
+        else "unavailable",
+        "delta_C_point": dc_point,
+        "utility": config.w_s * ds - config.w_c * dc + config.w_n * novelty
+        if comparable
+        else None,
+        "utility_point": config.w_s * ds - config.w_c * dc_point + config.w_n * novelty
+        if comparable
+        else None,
         "novelty": novelty,
         "guards": violations,
     }
@@ -811,17 +1174,31 @@ def _weighted_score(rewards, weights):
 
 def _tokens(usage):
     """Count native provider usage once, including cached and delegated work."""
+    observed, complete = _token_accounting(usage)
+    return observed if complete else None
+
+
+def _token_accounting(usage):
+    """Return (known token lower bound, complete); never substitute missing by 0."""
     if not isinstance(usage, Mapping):
-        return None
+        return None, False
+    complete = usage.get("accounting_complete") is not False
+
+    def combine(rows):
+        known = [value for value, _ in rows if value is not None]
+        return (
+            sum(known) if known else None,
+            complete and bool(rows) and all(ok for _, ok in rows),
+        )
+
     models = usage.get("model_usage")
     if isinstance(models, Mapping) and models:
         # Native session totals include delegated work absent from turn counters.
         # Partial session accounting must not fall back to the parent's counters.
-        values = [_tokens(value) for value in models.values()]
-        return sum(values) if None not in values else None
+        return combine([_token_accounting(value) for value in models.values()])
     if "total_tokens" in usage:
         value = usage["total_tokens"]
-        return value if _counter(value) else None
+        return (value, complete) if _counter(value) else (None, False)
     for input_key, output_key in (
         ("input_tokens", "output_tokens"),
         ("prompt_tokens", "completion_tokens"),
@@ -842,14 +1219,25 @@ def _tokens(usage):
                     usage.get(key, 0)
                     for key in ("cacheCreationInputTokens", "cacheReadInputTokens")
                 ]
-            return sum(values) if all(_counter(value) for value in values) else None
+            known = [value for value in values if _counter(value)]
+            # Default cache zeros do not prove any policy usage was reported.
+            observed = (
+                sum(known)
+                if any(_counter(usage.get(key)) for key in (input_key, output_key))
+                else None
+            )
+            return observed, complete and all(_counter(value) for value in values)
     calls = usage.get("model_calls")
     if isinstance(calls, (tuple, list)) and calls:
-        values = [
-            _tokens(call.get("usage")) for call in calls if isinstance(call, Mapping)
-        ]
-        return sum(values) if len(values) == len(calls) and None not in values else None
-    return None
+        return combine(
+            [
+                _token_accounting(
+                    call.get("usage") if isinstance(call, Mapping) else None
+                )
+                for call in calls
+            ]
+        )
+    return None, False
 
 
 def _counter(value):

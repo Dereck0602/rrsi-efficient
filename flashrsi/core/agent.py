@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import inspect
 import sys
+import time
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -14,6 +17,7 @@ from typing import Any
 
 import yaml
 
+from flashrsi._progress import Progress
 from flashrsi._records import _config_record
 from flashrsi._worker_prompt import instructions
 from flashrsi.config import Config, _ConfigLoader, _validate_role_config
@@ -212,12 +216,26 @@ class Agent:
         it without selecting it; only update changes the default version.
         The caller binds an integration for environment tasks. It receives this
         Agent with the pinned snapshot/config; ordinary questions use run.
+        Repeated tasks are independent executions in the same bounded queue;
+        their occurrence labels affect progress only, never task identity.
         """
         if type(self)._run is Agent._run:
             raise NotImplementedError(f"{self.name} does not implement _run")
         tasks = tuple(tasks)
         if any(not isinstance(task, Task) for task in tasks):
             raise ValueError("rollout tasks must be Task instances")
+        counts = Counter(task.task_id for task in tasks)
+        occurrences = Counter()
+        labels = []
+        for task in tasks:
+            occurrences[task.task_id] += 1
+            label = task.task_id
+            if counts[task.task_id] > 1:
+                label += f" [repeat={occurrences[task.task_id]}/{counts[task.task_id]}]"
+            labels.append(label)
+        concurrency = self.config.get("concurrency", 1)
+        if type(concurrency) is not int or concurrency < 1:
+            raise ValueError("agent.concurrency must be a positive integer")
         env_runner = self._env_runner
         if env_runner is None and any(task.env is not None for task in tasks):
             raise NotImplementedError(
@@ -234,18 +252,75 @@ class Agent:
             _Execution(selected, None, copy.deepcopy(self.config))
         )
         try:
-            trajectories = []
-            for task in tasks:
-                if task.env is None:
-                    result = await self.run(task.question)
-                else:
-                    result = await env_runner(self, task)
-                    if not isinstance(result, Trajectory):
-                        raise TypeError(
-                            "environment execution must return a Trajectory"
-                        )
-                trajectories.append(replace(result, task=task))
-            return tuple(trajectories)
+
+            async def execute(index, task):
+                # ContextVar values are inherited by reference. Give environment
+                # integrations a private config as well as the pinned Snapshot.
+                task_token = self._execution.set(
+                    _Execution(selected, None, copy.deepcopy(self.config))
+                )
+                progress.start(labels[index])
+                started_at = time.monotonic()
+                status = "error"
+                try:
+                    if task.env is None:
+                        result = await self.run(task.question)
+                    else:
+                        result = await env_runner(self, task)
+                        if not isinstance(result, Trajectory):
+                            raise TypeError(
+                                "environment execution must return a Trajectory"
+                            )
+                    status = result.status
+                    return replace(
+                        result,
+                        task=task,
+                        messages=(
+                            # Graders authenticate the final environment event.
+                            # Keep it last when adding host execution metadata.
+                            *result.messages[:-1],
+                            {
+                                "type": "TaskExecutionTiming",
+                                "elapsed_seconds": time.monotonic() - started_at,
+                            },
+                            *result.messages[-1:],
+                        ),
+                    )
+                except asyncio.CancelledError:
+                    status = "cancelled"
+                    raise
+                finally:
+                    self._execution.reset(task_token)
+                    progress.finish(labels[index], status)
+
+            async with Progress(len(tasks)) as progress:
+                if concurrency == 1:
+                    return tuple(
+                        [await execute(i, task) for i, task in enumerate(tasks)]
+                    )
+
+                semaphore = asyncio.Semaphore(concurrency)
+
+                async def bounded(index, task):
+                    async with semaphore:
+                        return await execute(index, task)
+
+                jobs = [
+                    asyncio.create_task(bounded(i, task))
+                    for i, task in enumerate(tasks)
+                ]
+                try:
+                    # gather preserves order even when tasks finish out of order.
+                    return tuple(await asyncio.gather(*jobs))
+                except BaseException:
+                    # Await native cleanup before returning or changing versions.
+                    for job in jobs:
+                        # A cancelled gather already cancelled its children.
+                        # Do not interrupt asynchronous finally blocks twice.
+                        if not job.done() and not job.cancelling():
+                            job.cancel()
+                    await asyncio.gather(*jobs, return_exceptions=True)
+                    raise
         finally:
             self._execution.reset(token)
 

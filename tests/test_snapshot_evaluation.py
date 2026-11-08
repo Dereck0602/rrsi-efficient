@@ -88,10 +88,13 @@ def evaluation(tmp_path, monkeypatch):
     return config, evolved, source
 
 
-def test_evaluate_only_test_preserves_snapshot_and_records(evaluation):
+def test_evaluate_only_test_preserves_snapshot_and_records(evaluation, capsys):
     config, snapshot, source = evaluation
     before = Path(config.run.snapshot).read_bytes()
     run_dir, result = asyncio.run(runner._evaluate(config))
+    progress = capsys.readouterr().err
+    assert "final-test | tasks" in progress
+    assert "1/1 (100%) active=0" in progress
     assert FrozenAgent.calls == ["bench-B test"]
     assert result["test_score"] == 1
     assert result["snapshot_id"] == snapshot.id

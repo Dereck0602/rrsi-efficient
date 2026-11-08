@@ -4,11 +4,13 @@ import asyncio
 import json
 import shutil
 from dataclasses import replace
+from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
 
+from flashrsi._progress import progress_scope, progress_session
 from flashrsi.agents import ClaudeCode, MiniAgent
 from flashrsi.algorithms import RRSI
 from flashrsi.algorithms.rrsi import (
@@ -26,6 +28,7 @@ from flashrsi.algorithms.rrsi import (
 from flashrsi.algorithms.rrsi import (
     _parse_edits as declaration,
 )
+from flashrsi.algorithms.rrsi import _token_accounting
 from flashrsi.algorithms.rrsi import (
     _tokens as tokens,
 )
@@ -227,6 +230,44 @@ def saved(algo, label):
     ]
 
 
+def test_progress_labels_cover_rounds_candidates_repeats_smoke_and_test(
+    monkeypatch, tmp_path
+):
+    markers = iter(["GOOD", "WORSE", "BEST", "LOW"])
+
+    def edit(prompt, directory):
+        (directory / "skills/main.md").write_text(next(markers))
+        return [change()]
+
+    algo, calls = setup(monkeypatch, tmp_path, edit, T=2, m=2, k=2, smoke_n=1)
+    output = StringIO()
+
+    async def scenario():
+        with progress_session("log", stream=output):
+            final = await algo.evolve()
+            with progress_scope("final-test"):
+                await algo._evaluate(final, algo.benchmark.test, label="test")
+
+    asyncio.run(scenario())
+    log = output.getvalue()
+    assert "RRSI | repeats=2 | baseline | tasks" in log
+    for repeat in (1, 2):
+        assert f"[repeat={repeat}/2]:finished" in log
+    for step in (1, 2):
+        for variant in (1, 2):
+            prefix = f"RRSI | round={step}/2 | candidate={variant}/2"
+            assert f"{prefix} | smoke | tasks" in log
+            assert f"{prefix} | repeats=2 | candidate | tasks" in log
+    assert "tasks [####################] 4/4 (100%)" in log
+    assert "rounds [####################] 2/2 (100%)" in log
+    assert "final-test | test | tasks [####################] 1/1 (100%)" in log
+    assert "Worker: analyzing trajectories" in log
+    assert "Worker: critic review" in log
+    assert "target-private-secret" not in log and "worker-private-secret" not in log
+    assert calls[-1][2] == "test-private"
+    assert all(prompt != "test-private" for _, _, prompt in calls[:-1])
+
+
 @pytest.mark.parametrize("cls", [MiniAgent, ClaudeCode])
 @pytest.mark.parametrize("relocate", [False, True])
 def test_full_history_siblings_and_heldout_boundaries(
@@ -281,6 +322,12 @@ def test_full_history_siblings_and_heldout_boundaries(
         "ACCEPTED",
         "LOST",
     ]
+    summaries = saved(algo, "round-summary")
+    assert [row["current_score"] for row in summaries] == [0.8, 1.0]
+    assert [row["best_score"] for row in summaries] == [0.8, 1.0]
+    assert [row["gain_from_baseline"] for row in summaries] == pytest.approx([0.3, 0.5])
+    assert all(row["accepted_candidate"] for row in summaries)
+    assert summaries[-1]["best_snapshot_id"] == result.id
     assert {task for _, _, task in calls} == {"train-0", "train-1"}
     assert len(calls) == 10
     assert history[0]["parent_id"] == history[1]["parent_id"] == seed.id
@@ -296,7 +343,7 @@ def test_full_history_siblings_and_heldout_boundaries(
 
 
 def test_cost_saving_can_select_regression_and_next_floor_uses_best(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, caplog
 ):
     versions = iter(["CHEAP", "TOO-LOW"])
 
@@ -313,11 +360,22 @@ def test_cost_saving_can_select_regression_and_next_floor_uses_best(
         w_s=0.0,
         outcomes={"SEED": (0.8, 100), "CHEAP": (0.78, 50), "TOO-LOW": (0.76, 1)},
     )
-    result = asyncio.run(algo.evolve())
+    initial_id = algo.target.snapshot.id
+    with caplog.at_level("INFO", logger="flashrsi.algorithms.rrsi"):
+        result = asyncio.run(algo.evolve())
     assert result.files["skills/main.md"].content == b"CHEAP"
     assert [row["accepted"] for row in saved(algo, "edit-history")] == [True, False]
     final = saved(algo, "decision")[-1]
     assert final["best_score"] == 0.8 and final["score"] == 0.78
+    summaries = saved(algo, "round-summary")
+    assert [row["round"] for row in summaries] == [1, 2]
+    assert [row["accepted_candidate"] for row in summaries] == [True, False]
+    assert all(row["best_score"] == 0.8 for row in summaries)
+    assert all(row["current_score"] == 0.78 for row in summaries)
+    assert all(row["best_snapshot_id"] == initial_id for row in summaries)
+    assert all(row["current_snapshot_id"] == result.id for row in summaries)
+    assert "round=1/2 complete | evolve current=78.00% best=80.00%" in caplog.text
+    assert "round=2/2 complete | evolve current=78.00% best=80.00%" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -633,7 +691,9 @@ def test_subagent_cost_controls_candidate_acceptance(monkeypatch, tmp_path, comp
     if complete:
         assert measurements[1]["cost"] == 1310
     else:
-        assert len(measurements) == 1 and saved(algo, "candidate")
+        assert measurements[1]["cost"] is None
+        assert measurements[1]["cost_accounting"]["observed_mean_tokens"] == 1110
+        assert measurements[1]["cost_accounting"]["trials_partial"] == 2
     decision = saved(algo, "edit-history")[0]
     assert not decision["accepted"]
     if complete:
@@ -643,17 +703,28 @@ def test_subagent_cost_controls_candidate_acceptance(monkeypatch, tmp_path, comp
         assert "token accounting" in decision["reason"]
 
 
-def test_missing_candidate_usage_is_not_free_cost(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    "score,accepted", [(0.49, False), (0.5, False), (0.51, False), (1, True)]
+)
+def test_missing_candidate_usage_requires_clear_gain(
+    monkeypatch, tmp_path, score, accepted
+):
     def edit(prompt, directory):
         (directory / "skills/main.md").write_text("MISSING", newline="\n")
         return [change()]
 
     algo, _ = setup(
-        monkeypatch, tmp_path, edit, outcomes={"SEED": (0.5, 100), "MISSING": (1, None)}
+        monkeypatch,
+        tmp_path,
+        edit,
+        outcomes={"SEED": (0.5, 100), "MISSING": (score, None)},
     )
     seed = algo.target.snapshot
-    assert asyncio.run(algo.evolve()).id == seed.id
-    assert "token accounting" in saved(algo, "edit-history")[0]["reason"]
+    assert (asyncio.run(algo.evolve()).id != seed.id) is accepted
+    decision = saved(algo, "edit-history")[0]
+    assert "token accounting" in decision["reason"]
+    assert decision["delta_C"] is None
+    assert decision["cost_comparison"] == "unavailable"
 
 
 def test_failed_trials_keep_denominator_even_if_grade_would_pass(monkeypatch, tmp_path):
@@ -752,13 +823,110 @@ def test_config_preconditions(monkeypatch, tmp_path, options, match):
         setup(monkeypatch, tmp_path, lambda *_: [], **options)
 
 
-def test_baseline_requires_complete_cost_accounting(monkeypatch, tmp_path):
+def test_missing_baseline_usage_continues_search(monkeypatch, tmp_path):
     algo, calls = setup(
         monkeypatch, tmp_path, lambda *_: [], outcomes={"SEED": (0.5, None)}
     )
-    with pytest.raises(ValueError, match="token accounting"):
-        asyncio.run(algo.evolve())
-    assert len(calls) == 2 and not algo.worker.prompts
+    asyncio.run(algo.evolve())
+    assert len(calls) == 2 and algo.worker.prompts
+    baseline = saved(algo, "measurement")[0]
+    assert baseline["cost"] is None
+    assert baseline["cost_accounting"]["trials_missing"] == 2
+    assert saved(algo, "decision")
+
+
+@pytest.mark.parametrize(
+    "usage,observed",
+    [
+        ({}, None),
+        ({"model_calls": [{"usage": {"total_tokens": 25}}, {"usage": {}}]}, 25),
+        ({"total_tokens": 25, "accounting_complete": False}, 25),
+        ({"total_tokens": 0}, 0),
+    ],
+)
+def test_incomplete_baseline_can_calibrate_and_accept_improvement(
+    monkeypatch, tmp_path, usage, observed
+):
+    def edit(prompt, directory):
+        (directory / "skills/main.md").write_text("GOOD")
+        return [change()]
+
+    algo, _ = setup(
+        monkeypatch,
+        tmp_path,
+        edit,
+        k=2,
+        delta=None,
+        outcomes={"SEED": Trajectory(output="0.5", usage=usage), "GOOD": (1, 120)},
+    )
+    assert asyncio.run(algo.evolve()).files["skills/main.md"].content == b"GOOD"
+    baseline = saved(algo, "measurement")[0]
+    assert baseline["cost"] is None
+    assert baseline["cost_accounting"]["observed_tokens"] == (observed or 0) * 4
+    assert saved(algo, "calibration")
+    assert saved(algo, "edit-history")[0]["delta_C"] is None
+    assert saved(algo, "decision")[0]["cost_accounting"]["complete"] is True
+
+
+@pytest.mark.parametrize("label", ["baseline", "candidate"])
+@pytest.mark.parametrize("errors", [3, 4])
+def test_failed_trial_limit_is_preserved_even_with_missing_usage(
+    monkeypatch, tmp_path, label, errors
+):
+    algo, _ = setup(monkeypatch, tmp_path, lambda *_: [])
+    algo.benchmark._splits["train"] = tuple(Task(str(i), str(i)) for i in range(20))
+
+    async def run(self, prompt, working_dir=None):
+        return Trajectory(
+            output="1",
+            status="error" if int(prompt) < errors else "finished",
+            error_message="timeout" if int(prompt) < errors else None,
+            usage={} if int(prompt) < errors else {"total_tokens": 100},
+        )
+
+    monkeypatch.setattr(MiniAgent, "_run", run)
+    measurement = algo._measure(algo.target.snapshot, label)
+    if errors > 3:
+        with pytest.raises(ValueError, match="too many failed trials"):
+            asyncio.run(measurement)
+    else:
+        result = asyncio.run(measurement)
+        assert result["score"] == pytest.approx(0.85)
+        assert result["cost"] is None
+    recorded = saved(algo, "measurement")[0]
+    assert recorded["error_trials"] == errors
+    assert recorded["cost_accounting"]["trials_missing"] == errors
+
+
+def test_partial_usage_preserves_known_counters_without_making_total_complete():
+    assert _token_accounting({"total_tokens": 20, "accounting_complete": False}) == (
+        20,
+        False,
+    )
+    assert _token_accounting(
+        {
+            "model_calls": [
+                {"usage": {"prompt_tokens": 100, "completion_tokens": 20}},
+                {"usage": {"prompt_tokens": 5}},
+            ]
+        }
+    ) == (125, False)
+    assert tokens({"total_tokens": 20, "accounting_complete": False}) is None
+
+
+def test_incomplete_cost_comparison_still_respects_domain_guard():
+    result = judge(
+        {"score": 1, "cost": None, "guard_metrics": {"safety": 0}},
+        {"score": 0.5, "cost": 100, "guard_metrics": {"safety": 1}},
+        0.5,
+        0.02,
+        [change()],
+        set(),
+        Config({**RRSI._defaults, "guards": {"safety": {"max_drop": 0.1}}}),
+    )
+    assert result["admissible"] is False
+    assert result["delta_C"] is None
+    assert "domain guard" in result["reason"]
 
 
 def test_automatic_calibration_uses_repeated_trials(monkeypatch, tmp_path):

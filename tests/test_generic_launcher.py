@@ -110,6 +110,9 @@ class GenericLauncherTests(unittest.TestCase):
         values["benchmark"]["data_path"] = {"train": ["data/train.json"]}
         values["benchmark"]["evolution_data_path"] = "external-tasks"
         values["agent"]["source_dir"] = "my-agent"
+        values["agent"]["harbor"] = {
+            "verifier_dependencies_manifest": "images/manifest.json"
+        }
         path.write_text(yaml.safe_dump(values), encoding="utf-8")
         env = {k: v for k, v in os.environ.items() if not k.startswith("FLASHRSI_")}
         env["FLASHRSI_JUDGE_API_KEY"] = "judge-secret"
@@ -119,6 +122,10 @@ class GenericLauncherTests(unittest.TestCase):
             loaded.benchmark.data_path.train, [str(self.root / "data/train.json")]
         )
         self.assertEqual(loaded.agent.source_dir, str(self.root / "my-agent"))
+        self.assertEqual(
+            loaded.agent.harbor.verifier_dependencies_manifest,
+            str(self.root / "images/manifest.json"),
+        )
         self.assertEqual(
             loaded.benchmark.evolution_data_path, str(self.root / "external-tasks")
         )

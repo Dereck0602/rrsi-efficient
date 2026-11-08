@@ -20,6 +20,13 @@
 
 ## 运行
 
+本地 DeepSeek + RRSI 的固定 30/0/59 划分、任务并发和超时下限，见
+[TB2.1 RRSI 实验脚本](tb21-rrsi-deepseek.zh-CN.md)。
+
+`agent.concurrency` 控制同一次 rollout 内的任务并发，默认 1。
+`agent.harbor.agent_min_timeout` 可设置原生 Agent 时限下限，保留更长的任务预算；
+它与固定覆盖值 `agent.timeout` 互斥。环境准备和 verifier 时限独立计算。
+
 先填写 [2.1 + OPRO 示例](../examples/terminal_bench21_opro.yaml) 中 Target 与 Worker 各自的模型和凭据：
 
 ```bash

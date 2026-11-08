@@ -114,6 +114,8 @@ class Context:
     _final_continues: int = 0
     _final_continue_max: int = 3
     model_usage: list = field(default_factory=list)
+    model_request_errors: list = field(default_factory=list)
+    usage_complete: bool = True
 
     @property
     def turn(self) -> int:
@@ -126,6 +128,24 @@ class Context:
     @property
     def remaining_turns(self) -> int:
         return max(0, self.max_turns - self._current_turn)
+
+    def model_request_failed(self, error, attempt, attempts, *, role, turn=None):
+        """Keep failures visible even when a later attempt succeeds."""
+        self.usage_complete = False
+        delay = llm.retry_delay(error, attempt, attempts)
+        event = {
+            "role": role,
+            "turn": self.turn if turn is None else turn,
+            "attempt": attempt,
+            "max_attempts": attempts,
+            "error_type": type(error).__name__,
+            "http_status": llm.http_status(error),
+            "error": str(error),
+            "retry_delay_seconds": delay,
+        }
+        self.model_request_errors.append(self.trace.redact(event))
+        self.trace.event("model_request_error", **event)
+        return delay
 
     async def side_text(
         self, prompt: str, *, purpose: str, max_tokens: int = 500
@@ -142,8 +162,12 @@ class Context:
                 model=llm.SIDE_MODEL,
                 max_tokens=capped,
                 _return_response=True,
+                _on_error=lambda error, attempt, attempts: self.model_request_failed(
+                    error, attempt, attempts, role="side"
+                ),
             )
         except Exception as e:
+            self.usage_complete = False
             self.trace.event(
                 "side_llm_error",
                 call_n=self._side_llm_calls,
@@ -1028,6 +1052,9 @@ async def run(
                 break  # success
 
             except Exception as e:
+                delay = ctx.model_request_failed(
+                    e, _attempt, llm.LLM_MAX_RETRIES, role="primary"
+                )
                 _llm_last_err = e
                 logger.warning(
                     "LLM call failed (turn %d, attempt %d/%d): %s",
@@ -1036,10 +1063,9 @@ async def run(
                     llm.LLM_MAX_RETRIES,
                     trace.redact(str(e)),
                 )
-                if llm.is_fatal_api_error(e):
+                if delay is None:
                     break
-                if _attempt < llm.LLM_MAX_RETRIES:
-                    await asyncio.sleep(2**_attempt)  # 2s, 4s
+                await asyncio.sleep(delay)
 
         if _llm_last_err is not None:
             e = _llm_last_err
@@ -1382,10 +1408,16 @@ async def run(
                 )
                 break
             except Exception as e:
-                if llm.is_fatal_api_error(e):
+                delay = ctx.model_request_failed(
+                    e,
+                    _attempt,
+                    llm.LLM_MAX_RETRIES,
+                    role="forced_answer",
+                    turn=last_turn + 1,
+                )
+                if delay is None:
                     break
-                if _attempt < llm.LLM_MAX_RETRIES:
-                    await asyncio.sleep(2**_attempt)
+                await asyncio.sleep(delay)
 
     if not answer:
         answer = "(no answer produced)"
@@ -1414,6 +1446,8 @@ async def run(
         "injections_count": ctx._injections_count,
         "final_continues": ctx._final_continues,
         "usage": ctx.model_usage,
+        "usage_complete": ctx.usage_complete,
+        "model_request_errors": ctx.model_request_errors,
     }
     trace.save_summary(summary)
     trace.event("run_end", **summary)

@@ -36,6 +36,34 @@ This requests one round and one candidate, with two repetitions per full measure
 5. Propose each candidate, check and review its edit, then compile and execute a small native smoke. After proposals are generated, fully measure eligible candidates and apply the selection rules below. All comparisons use the saved incumbent measurement, not a fresh incumbent re-evaluation each round.
 6. Record every edit's outcome and attribution after selecting the round winner. Advance the search version if a winner exists; otherwise retain the incumbent. Update the historical best score only from accepted incumbents. After `T` rounds, promote the final current version once.
 
+Each full measurement submits all `N * k` task executions to one rollout queue.
+They share the Target's `concurrency` limit across repeats, including environment
+setup, agent execution, verification and cleanup. The default `task_order: fifo`
+dispatches jobs in repeat/task order; the next repeat can start before the
+previous repeat's slowest tasks finish.
+One Snapshot and configuration are pinned for the whole queue; each execution
+gets a private configuration, harness export and, for Harbor, a fresh trial and
+environment. Task IDs and checksums are unchanged. After the queue completes,
+grading and canonical records remain separate for each repeat, so repeated task
+IDs cannot overwrite scores or token usage. Progress reports `N * k` executions
+and identifies the repeat in each task's label. Restored baselines make no new
+rollout calls; smoke and final test still execute each selected task once.
+
+`task_order: longest_first` instead dispatches the longest predicted executions
+first, across all repeats. Round 1 uses mean per-task baseline/calibration times;
+each later round uses mean per-task times from all completed candidate
+measurements in the previous round, including rejected candidates and errors.
+All siblings share the same estimates, which are frozen until the next round.
+Missing observations retain the last known estimate; tasks without any history
+use the mean of known task estimates. With no history, dispatch remains FIFO.
+Ties preserve canonical repeat/task order. Scores, evidence, and token accounting
+are restored to canonical order before grading; scheduling never changes task
+membership or repeat counts. `TaskExecutionTiming` records slot occupancy,
+excluding queue wait. Older restored Harbor trials can supply their native
+start/finish times from saved artifacts. Missing or invalid timing is ignored.
+Measurement records include the planned `scheduling` order and per-trial
+`execution_seconds`. Smoke and held-out timings do not train this scheduler.
+
 ## Admission, ties, and final selection
 
 Let S and C be incumbent score and mean Target token cost; S' and C' are candidate values, and S* is the highest score reached by accepted versions:
@@ -62,9 +90,13 @@ Among admissible candidates, choose the highest **score**, not the highest utili
 
 ## Scores, failures, costs, and calibration
 
-The score is an equal-weight mean over all train trials unless `weight_metric` names a strictly positive metric weight for every trial. Error-status trials receive reward zero and remain in the denominator. If their fraction exceeds `invalid_missing_frac`, the measurement is invalid. Missing weights, missing guard metrics, incomplete token usage, or nonpositive mean token cost also invalidate it. An invalid baseline aborts search; an invalid candidate measurement is rejected. Framework protocol errors and Worker failures can still propagate.
+The score is an equal-weight mean over all train trials unless `weight_metric` names a strictly positive metric weight for every trial. Error-status trials receive reward zero and remain in the denominator. If their fraction exceeds `invalid_missing_frac` (default 15%), the measurement is invalid. Missing weights and missing guard metrics also invalidate it. An invalid baseline aborts search; an invalid candidate measurement is rejected. Worker output truncation is handled by the bounded recovery policy below; other Worker failures and framework protocol errors still propagate. Missing token accounting alone does not invalidate a measurement.
 
 Cost is the mean token total per complete Target task execution, including cached tokens and reported internal auxiliary/subagent work, excluding evolution Worker calls. The reader supports native usage forms and prioritizes nonempty SDK `model_usage` session totals to avoid counting only the parent agent or double-counting totals. It cannot infer unreported usage. This is token cost, not money or latency.
+
+For incomplete usage or a nonpositive mean, `cost` is null. `cost_accounting` separately records complete/partial/missing trial counts, observed tokens and their mean over **all** trials (a lower bound, not an estimate of missing consumption). If either side lacks a usable complete cost, acceptance requires a score gain strictly above `delta`, together with the historical score floor and domain guards. Cost savings or novelty alone cannot justify promotion in that comparison; `delta_C` is null. Complete accounting retains the original RRSI cost rule. This missing-cost fallback is a local robustness extension, not upstream-equivalent cost selection.
+
+MiniAgent flushes reported usage to its native trace after each returned model call. On timeout or subprocess failure the adapter stops/reaps the child, recovers valid trace entries, and marks `accounting_complete: false`. Truncated trace tails are skipped. Calls interrupted before the provider returns usage remain unknown. Recovered usage is included in end-of-run totals, with an explicit count of incomplete records; the adapter does not fabricate zero usage or estimate unreported tokens.
 
 With `delta: null`, default calibration bootstraps trials within each task 2,000 times and uses `delta_z * sqrt(2) * std(bootstrap scores)`. With multiple baseline measurements, a positive sample standard deviation supplies the band; otherwise pooled within-task bootstrap is rescaled to the original evaluation size. Calibration retains the first baseline as incumbent rather than selecting the best calibration run. Automatic calibration requires `k >= 2` or `calibration_evals >= 2`.
 
@@ -84,11 +116,22 @@ The implementation rounds the intermediate value to nine decimal places before t
 
 Each candidate gets an initial edit plus at most `repair_rounds` repairs in the same checkout. The Worker reads `context.json` and `current-diff.txt`; repaired declarations must account for all changes relative to the incumbent. Snapshot constraints, empty edits, credential-pattern checks, binary-diff rejection, critic objections, and reserved-slot compliance are handled before smoke. The critic reviews the full diff and returns a `<REVIEW>` verdict. Unparseable critic replies are retried up to three calls, then treated as rejection.
 
+Explicit Worker generation truncation (`length` or `max_output_tokens`) restarts the affected phase at most `worker_output_retries` times (default 1, meaning two total attempts). The phases are a round's analysis, including its digests, and each candidate's proposal, including repairs and critic review. Each candidate restart uses a fresh incumbent checkout, discarding partial edits. Each analysis restart discards the incomplete report and waits for active digester cleanup. A retry receives a reminder to take concrete actions and return a concise structured response. Model settings, reasoning mode, per-response token limits and per-Worker-call timeouts stay unchanged; each fresh call can consume its normal time and token allowance. Exhausted candidate attempts produce an unmeasured rejected candidate; exhausted analysis attempts skip that round while retaining the incumbent and best score. Later candidates and rounds continue. Set `worker_output_retries: 0` to skip immediately. Context overflow, authentication, infrastructure errors and cancellation are not converted into output-budget skips.
+
+Failed and retried Worker trajectories retain their observed usage. `worker-output-budget` records the phase, round index, candidate index, attempt, error and retry/skip action. An analysis skip is also marked in `rrsi-context` and `round-summary`; a candidate skip is recorded in `edit-history` without a fabricated score.
+
 Once those gates pass, compile all candidate `.py` files and execute up to `smoke_n` selected representative train tasks in train order. Error status fails the smoke; score improvement is not required here. `smoke_n: 0` omits execution but still compiles. A compile or smoke failure returns an invalid candidate directly; it does not re-enter the same candidate's repair loop. Temporary evidence files are removed before resource commit.
 
 Digest quotes must match a substring of a decoded trace value, and the trace file must remain unchanged. Each digest has a 6,000-character limit and up to three protocol attempts. Analyst interaction is capped at 30 turns; these are protocol constants, not configurable search budgets.
 
 ## Parameters and cost
+
+`digest_concurrency` (default 1) bounds concurrent independent digest investigations
+within one analyst action (up to 8 requests). Results retain request order and each
+digester has its own evidence directory and Worker execution context. Analyst
+decisions and follow-up batches remain sequential; failure/cancellation awaits
+all active Worker cleanup before returning. The `digests` progress bar reports
+this concurrency separately from the sequential evolution `rounds` counter.
 
 Defaults belong under `algorithm`. RRSI rejects unknown algorithm options.
 
@@ -96,6 +139,7 @@ Defaults belong under `algorithm`. RRSI rejects unknown algorithm options.
 | --- | --- | --- |
 | `T` | `20` | Search rounds, integer at least 1. |
 | `k` | `2` | Repetitions per full train measurement, integer at least 1. |
+| `task_order` | `fifo` | Dispatch in canonical order or `longest_first` using previous-round task durations. |
 | `m` | `2` | Sibling candidate slots per round, integer at least 1. |
 | `b_min` | `1` | Minimum mechanism-budget parameter, integer at least 1. |
 | `b_max` | `4` | Initial mechanism-budget parameter, integer at least `b_min`. |
@@ -110,6 +154,7 @@ Defaults belong under `algorithm`. RRSI rejects unknown algorithm options.
 | `w_n` | `0.5` | Nonnegative structural novelty weight. |
 | `n_prune` | `4` | Recent-round pruning window, integer at least 1. |
 | `repair_rounds` | `5` | Extra proposal repair attempts, integer at least 0. |
+| `worker_output_retries` | `1` | Extra phase attempts after Worker output truncation, integer at least 0; exhausted attempts skip the candidate or round. |
 | `invalid_missing_frac` | `0.15` | Maximum error-trial fraction, in `[0, 1]`. |
 | `seed` | `7` | Integer bootstrap seed; does not control model sampling. |
 | `n_fail_traces` | `22` | Low-score representative task count, integer at least 0. |
@@ -122,7 +167,7 @@ Defaults belong under `algorithm`. RRSI rejects unknown algorithm options.
 
 For N train tasks, full measurement cost is `N * k` Target task executions. Baseline/calibration costs `N * k * calibration_evals` when delta is automatic, otherwise `N * k`. Full candidate measurements cost at most `T * m * N * k`; candidate smokes add at most `T * m * min(smoke_n, N, n_fail_traces + n_success_traces)`. Invalid proposals can reduce these counts. Final test, retries, and native model/tool turns are additional.
 
-Worker cost is separate: per-candidate editing has at most `repair_rounds + 1` calls, with up to three critic calls per review reached. Each round also includes analyst and digest calls; a digest request can investigate up to eight traces. The mechanism budget does not cap all these API requests.
+Worker cost is separate: each candidate phase attempt has at most `repair_rounds + 1` editing calls, with up to three critic calls per review reached. Output truncation can restart the phase for at most `worker_output_retries + 1` total attempts. Each round also includes analyst and digest calls; a digest request can investigate up to eight traces, and the analysis phase has the same restart bound. The mechanism budget does not cap all these API requests.
 
 ## Records and adaptation
 

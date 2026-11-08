@@ -19,6 +19,7 @@ _COUNTERS = (
     "records",
     "finished_records",
     "failed_records",
+    "records_with_incomplete_usage",
 )
 
 
@@ -155,6 +156,9 @@ def _collect_usage(root):
         total = groups.setdefault(role, {}).setdefault(outcome, _empty())
         total["records"] += 1
         total[f"{outcome}_records"] += 1
+        total["records_with_incomplete_usage"] += int(
+            (trajectory.get("usage") or {}).get("accounting_complete") is False
+        )
         _add_usage(total, trajectory.get("usage") or {}, seen, role)
     combined = _empty()
     for outcomes in groups.values():
@@ -191,6 +195,11 @@ def _render_summary(summary):
         f"状态：{result.get('status', 'unknown')}；生成时间：{summary['generated_at']}",
         "",
     ]
+    if summary.get("resume"):
+        lines += [
+            f"续跑来源：{summary['resume']['source_run']}；复用基线 {summary['resume']['reused_baseline_trials']} 次、候选 {summary['resume'].get('reused_candidate_trials', 0)} 次。以下用量合计包含继承记录中的用量，不代表这些调用被重新执行；选择用的估算不计入实际 API 用量。",
+            "",
+        ]
     if summary.get("models"):
         lines += [
             f"答题模型：{summary['models'].get('target', '未记录')}；演化模型：{summary['models'].get('worker', '未记录')}。",
@@ -226,6 +235,7 @@ def _render_summary(summary):
         f"已记录用量合计：输入 {total['input_tokens']:,}；输出 {total['output_tokens']:,}；缓存读取 {total['cache_read_tokens']:,}；缓存写入 {total['cache_write_tokens']:,}。",
         f"成功请求记录 {total['finished_records']:,}；失败记录 {total['failed_records']:,}。请求记录可能包含多轮调用，不等于供应商计费调用次数。",
         f"用量条目 {total['usage_entries']:,}；其中缺少完整 token 数据 {total['usage_entries_missing_tokens']:,}；去重条目 {total['duplicate_usage_entries']:,}。",
+        f"明确标记用量不完整的任务/Worker 记录 {total.get('records_with_incomplete_usage', 0):,}；这些记录中的已知用量已计入，未报告部分不按零消耗解释。",
         f"SDK 费用记录合计：{'未记录' if cost is None else f'USD {cost:.6f}'}；有费用记录的用量条目 {total['sdk_cost_entries']:,}；计价依据：{', '.join(total['cost_bases']) or '未记录'}。",
         "网关实际费用：未记录。SDK 数值仅为日志中的估算，覆盖不完整，不能作为本实验总账单。",
         "失败请求已记录的用量计入合计；未落盘的请求及供应商内部重试不可追溯，缺失不代表零。",
@@ -263,6 +273,19 @@ def _write_run_summary(root, *, result=None, emit=True):
         "result": {key: result[key] for key in allowed if key in result},
         "usage": _collect_usage(root),
     }
+    if (root / "resume.json").is_file():
+        resume = json.loads((root / "resume.json").read_text(encoding="utf-8"))
+        summary["resume"] = {
+            key: resume[key]
+            for key in (
+                "source_run",
+                "reused_baseline_trials",
+                "reused_candidate_trials",
+                "mode",
+                "next_round",
+            )
+            if key in resume
+        }
     config = result.get("config", {})
     if config:
         summary["models"] = {

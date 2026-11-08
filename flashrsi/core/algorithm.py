@@ -10,6 +10,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import get_args
 
+from flashrsi._progress import progress_scope
 from flashrsi._records import _redact, _secrets, _trajectory_record, _write_record
 from flashrsi.config import Config
 from flashrsi.core.agent import Agent
@@ -194,9 +195,13 @@ class Algorithm:
         """
         self._save_snapshot(snapshot)
         tasks = tuple(tasks)
-        results = self.benchmark.grade(
-            await self.target.rollout(tasks, snapshot=snapshot)
-        )
+        with progress_scope(label):
+            trajectories = await self.target.rollout(tasks, snapshot=snapshot)
+            return self._grade_and_record(snapshot, tasks, trajectories, label=label)
+
+    def _grade_and_record(self, snapshot, tasks, trajectories, *, label):
+        """Grade one task batch, validate its identity/order, and persist it."""
+        results = self.benchmark.grade(trajectories)
         if tuple(item.task for item in results) != tasks:
             raise ValueError(
                 "rollout/grade must preserve the requested tasks and order"

@@ -63,6 +63,14 @@ def bind(agent):
     cls = type(agent)
     if _agent_class(f"{cls.__module__}:{cls.__qualname__}") is not cls:
         raise ValueError("Container execution requires an importable Agent class")
+    from flashrsi.integrations._verifier_dependencies import load_manifest
+
+    manifest_path = agent.config.get("harbor", {}).get("verifier_dependencies_manifest")
+    # All repeats/candidates in this process use the same prepared image IDs,
+    # even if another preparation job subsequently updates the manifest file.
+    agent._prepared_verifier_manifest = (
+        load_manifest(manifest_path) if manifest_path else None
+    )
     agent._env_runner = _run
 
 
@@ -93,6 +101,37 @@ async def _run(agent, task, *, verifier_env=None, agent_allowed_hosts=None):
         resolve_task_verifier_mode(native.config) == VerifierEnvironmentMode.SHARED
     )
     environment_import = _docker_environment_import(native, remote_docker)
+    environment_kwargs = {}
+    runtime_cache = None
+    if cache_dir := options.get("agent_runtime_cache_dir"):
+        from flashrsi.integrations._container_payload import runtime_cache_metadata
+
+        if remote_docker or environment_import is None:
+            raise ValueError(
+                "Shared Agent runtime requires local single-service Docker"
+            )
+        runtime_cache = runtime_cache_metadata(cache_dir)
+        environment_kwargs["agent_runtime_cache_dir"] = runtime_cache["path"]
+    prepared = None
+    if options.get("verifier_dependencies_manifest"):
+        from flashrsi.integrations._verifier_dependencies import prepared_entry
+
+        prepared = prepared_entry(
+            getattr(agent, "_prepared_verifier_manifest", None)
+            or options["verifier_dependencies_manifest"],
+            task.task_id,
+            native,
+        )
+        if prepared and (not shared_verifier or environment_import is None):
+            raise ValueError(
+                "Prepared verifier images require shared single-service Docker tasks"
+            )
+        if prepared:
+            environment_kwargs["prepared_image"] = prepared["image_id"]
+            if cache := prepared.get("runtime_cache"):
+                if remote_docker:
+                    raise ValueError("Shared verifier runtime requires local Docker")
+                environment_kwargs["verifier_runtime_cache"] = cache
     install_source = options.get("uv_install_source", "astral")
     installers = {
         "astral": "https://astral.sh/uv/0.11.4/install.sh",
@@ -100,9 +139,7 @@ async def _run(agent, task, *, verifier_env=None, agent_allowed_hosts=None):
     }
     if not isinstance(install_source, str) or install_source not in installers:
         raise ValueError("harbor.uv_install_source must be astral or github")
-    timeout = _positive(
-        config.get("timeout", native.config.agent.timeout_sec or 300), "timeout"
-    )
+    timeout = _agent_timeout(config, native.config.agent.timeout_sec)
     setup_timeout = _positive(options.get("setup_timeout", 600), "harbor.setup_timeout")
     grace = _positive(options.get("cleanup_grace", 30), "harbor.cleanup_grace")
     config["timeout"] = timeout
@@ -125,6 +162,10 @@ async def _run(agent, task, *, verifier_env=None, agent_allowed_hosts=None):
         "task_checksum": checksum,
         "snapshot_id": snapshot.id,
     }
+    if prepared:
+        event["prepared_verifier"] = prepared
+    if runtime_cache:
+        event["prepared_agent_runtime"] = runtime_cache
 
     with TemporaryDirectory(prefix="flashrsi-harbor-") as temporary:
         root = Path(temporary)
@@ -157,8 +198,17 @@ async def _run(agent, task, *, verifier_env=None, agent_allowed_hosts=None):
                         delete=True,
                         env=_plain(options.get("environment_env", {})),
                         import_path=environment_import,
+                        kwargs=environment_kwargs,
                     ),
-                    verifier=VerifierConfig(env=verifier_env or {}),
+                    verifier=VerifierConfig(
+                        env=verifier_env or {},
+                        import_path="flashrsi.integrations._prepared_verifier:PreparedVerifier"
+                        if prepared
+                        else None,
+                        kwargs={"dependency_spec_sha256": prepared["spec_sha256"]}
+                        if prepared
+                        else {},
+                    ),
                 )
             )
             if shared_verifier:
@@ -299,6 +349,21 @@ def _positive(value, field):
     if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
         raise ValueError(f"agent.{field} must be a positive finite number")
     return value
+
+
+def _agent_timeout(config, native_timeout):
+    """An optional floor preserves longer native task deadlines."""
+    minimum = config.get("harbor", {}).get("agent_min_timeout")
+    if minimum is not None:
+        if "timeout" in config:
+            raise ValueError(
+                "Use agent.harbor.agent_min_timeout or agent.timeout, not both"
+            )
+        return max(
+            _positive(native_timeout or 300, "native_timeout"),
+            _positive(minimum, "harbor.agent_min_timeout"),
+        )
+    return _positive(config.get("timeout", native_timeout or 300), "timeout")
 
 
 def _read_log(path):

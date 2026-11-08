@@ -35,9 +35,16 @@ def test_native_trial_directory_lifetime(tmp_path, monkeypatch, persistent):
             steps=None,
             environment=SimpleNamespace(os=SimpleNamespace(value="linux")),
             agent=SimpleNamespace(timeout_sec=1),
+            verifier=SimpleNamespace(
+                environment_mode=harbor.VerifierEnvironmentMode.SEPARATE,
+                environment=None,
+            ),
         ),
         instruction=task.question,
         checksum="task-checksum",
+        paths=SimpleNamespace(
+            environment_dir=tmp_path / "environment", tests_dir=tmp_path / "tests"
+        ),
     )
     monkeypatch.setattr(harbor, "HarborTask", lambda path: native)
     monkeypatch.setattr(harbor.shutil, "which", lambda command: "docker")

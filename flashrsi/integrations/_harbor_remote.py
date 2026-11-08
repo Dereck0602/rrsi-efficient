@@ -7,8 +7,38 @@ from tempfile import TemporaryDirectory
 
 from harbor.environments.docker.docker import DockerEnvironment
 
+from flashrsi.integrations._container_payload import (
+    _RUNTIME_CACHE,
+    runtime_cache_metadata,
+)
+from flashrsi.integrations._verifier_dependencies import ROOT, verifier_runtime_metadata
+
 
 class _RemoteDockerEnvironment(DockerEnvironment):
+    def __init__(
+        self,
+        *args,
+        prepared_image=None,
+        agent_runtime_cache_dir=None,
+        verifier_runtime_cache=None,
+        **kwargs,
+    ):
+        self._agent_runtime_cache = (
+            runtime_cache_metadata(agent_runtime_cache_dir)
+            if agent_runtime_cache_dir
+            else None
+        )
+        self._verifier_runtime_cache = (
+            verifier_runtime_metadata(verifier_runtime_cache)
+            if verifier_runtime_cache
+            else None
+        )
+        if prepared_image is not None:
+            kwargs["task_env_config"] = kwargs["task_env_config"].model_copy(
+                update={"docker_image": prepared_image}
+            )
+        super().__init__(*args, **kwargs)
+
     @property
     def capabilities(self):
         # Trial downloads logs via Harbor's existing copy transport.
@@ -32,7 +62,23 @@ class _RemoteDockerEnvironment(DockerEnvironment):
                     "Remote Docker supports only writable log mounts under /logs"
                 )
         path = super()._write_mounts_compose_file()
-        path.write_text(json.dumps({"services": {"main": {"volumes": []}}}))
+        volumes = []
+        for cache, target in (
+            (self._agent_runtime_cache, _RUNTIME_CACHE),
+            (getattr(self, "_verifier_runtime_cache", None), ROOT),
+        ):
+            if not cache:
+                continue
+            volumes.append(
+                {
+                    "type": "bind",
+                    "source": cache["path"],
+                    "target": target,
+                    "read_only": True,
+                    "bind": {"create_host_path": False},
+                }
+            )
+        path.write_text(json.dumps({"services": {"main": {"volumes": volumes}}}))
         # Keep self._mounts: start() uses their targets to create log directories.
         return path
 

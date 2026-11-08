@@ -456,7 +456,10 @@ def test_bad_digest_stops_after_bounded_protocol_retries(monkeypatch, tmp_path):
     assert not list((algo._run_dir / "working").iterdir())
 
 
-def test_analyst_can_dispatch_all_lenses_and_follow_up(monkeypatch, tmp_path):
+@pytest.mark.parametrize("digest_concurrency", [1, 8])
+def test_analyst_can_dispatch_all_lenses_and_follow_up(
+    monkeypatch, tmp_path, digest_concurrency
+):
     original = Worker._run
     rounds = 0
 
@@ -493,7 +496,14 @@ def test_analyst_can_dispatch_all_lenses_and_follow_up(monkeypatch, tmp_path):
         (directory / "skills/main.md").write_text("GOOD", newline="\n")
         return [change()]
 
-    algo, _ = setup(monkeypatch, tmp_path, edit, n_fail_traces=1, n_success_traces=1)
+    algo, _ = setup(
+        monkeypatch,
+        tmp_path,
+        edit,
+        n_fail_traces=1,
+        n_success_traces=1,
+        digest_concurrency=digest_concurrency,
+    )
     asyncio.run(algo.evolve())
     report = saved(algo, "rrsi-context")[0]["analysis"]
     assert len(report["digests"]) == 3

@@ -26,6 +26,7 @@ _LLM_FIELDS = (
     "reasoning_effort",
     "effort",
     "llm_max_retries",
+    "llm_retry_policy",
     "extra_body",
 )
 
@@ -229,6 +230,8 @@ def _validate(config: dict) -> None:
     if isinstance(output_dir, Path):
         output_dir = str(output_dir)
     _require_text(output_dir, "run.output_dir")
+    if config["run"].get("progress", "auto") not in ("auto", "bar", "log", "off"):
+        raise ValueError("run.progress must be auto, bar, log, or off")
 
     split = config["benchmark"]["split"]
     if split != "auto":
@@ -282,6 +285,18 @@ def _validate_role_config(values: Mapping[str, Any], section: str) -> None:
             raise ValueError(f"Move {section}.{field} to {section}.llm.{field}")
     if "llm" in values and not isinstance(values["llm"], Mapping):
         raise ValueError(f"{section}.llm must be a mapping")
+    llm = values.get("llm", {})
+    if "llm_retry_policy" in llm:
+        if llm["llm_retry_policy"] not in ("legacy", "transient"):
+            raise ValueError(
+                f"{section}.llm.llm_retry_policy must be legacy or transient"
+            )
+        if llm["llm_retry_policy"] == "transient":
+            attempts = llm.get("llm_max_retries", 1)
+            if type(attempts) is not int or attempts < 1:
+                raise ValueError(
+                    f"{section}.llm.llm_max_retries must be a positive integer"
+                )
 
 
 def _require_name(value: Any, field: str) -> None:

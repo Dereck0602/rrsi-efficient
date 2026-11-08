@@ -143,6 +143,10 @@ def _load(path, snapshot=None):
             ("data_path", "corpus_path", "gold_path", "evolution_data_path"),
         ),
         (config.agent, ("source_dir", "cli_path")),
+        (
+            config.agent.get("harbor", {}),
+            ("verifier_dependencies_manifest", "agent_runtime_cache_dir"),
+        ),
         (config.algorithm.get("worker", {}), ("source_dir", "cli_path")),
     ):
         for key in keys:

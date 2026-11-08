@@ -31,7 +31,7 @@ flashrsi run --config examples/rrsi.yaml \
 
 1. 对初始 Snapshot 的全部 train 任务执行 `k` 次，保留逐题分数、轨迹、token 成本及可选权重和 guard 指标。`delta` 为 null 时根据基线 trial 校准噪声带，否则直接使用配置值。
 2. 按任务实测均分排序，取最多 `n_fail_traces` 个低分任务的最差 trial，再取最多 `n_success_traces` 个未入选高分任务的最佳 trial。这些标签表示排序位置，不是硬性的成功/失败阈值。
-3. analyst 读取任务表，调度 digester 调查代表轨迹。digester 通过 Worker 工具读取独立的脱敏轨迹文件，支持失败、能力、成功三种视角及追问；切换视角不会提供另一条 trial。至少完成一次 digest 才能形成报告。
+3. analyst 读取任务表，调度 digester 调查代表轨迹。digester 通过 Worker 工具读取独立的脱敏轨迹文件，支持失败、能力、成功三种视角及追问；切换视角不会提供另一条 trial。`digest_concurrency` 控制同一批独立 digest 的并发上限（默认 1），结果按请求顺序汇总；analyst 的后续决策等本批完成后再执行。至少完成一次 digest 才能形成报告。
 4. 固定本轮 context，包含分析、代表轨迹、当前分数/成本、历史最佳分数、编辑预算、探索/剪枝建议及既有编辑历史。`m` 个兄弟候选均从同一当前 Snapshot 出发、读取同一 context，不在本轮内借用其他兄弟候选的结果。
 5. 依次生成候选，检查与审查改动，再编译并执行少量原生 smoke。全部提案完成后，对合格候选做完整测量并按下节规则选择。比较使用保存的 incumbent 测量，不会每轮重新测 incumbent。
 6. 选出本轮胜者后，记录每项编辑的结果与归因。有胜者则推进搜索版本，否则保留 incumbent。历史最高分只根据已接受 incumbent 更新。完成 `T` 轮后，统一提升最终当前版本。
@@ -60,11 +60,36 @@ novelty 统计此前获胜编辑中未出现过的不同 `client_tool`、`skill`
 
 `guards` 按相对 incumbent 的 Benchmark 指标非加权均值变化执行 `max_drop` 和/或 `max_rise` 约束，与分数/成本规则共同生效。可接受但输给其他候选的版本记为 `LOST`；只有胜者进入已接受组件的新颖性历史。最终返回最后接受的版本，不恢复 S* 对应的 Snapshot。
 
+完整测量将 `N * k` 次任务执行放入同一个队列，共享 Target 的
+`concurrency` 上限；槽位覆盖环境准备、Agent 执行、verifier 和清理全过程。
+默认 `task_order: fifo` 按 repeat/任务顺序入队；第一遍仍有慢任务运行时，
+空出的槽位可以开始第二遍。
+整个队列固定同一个 Snapshot 和配置；每次执行分别复制配置、导出 harness 文件，
+Harbor 分别创建 trial 和环境。原始任务 ID 和 checksum 保持不变。
+队列结束后按 repeat 分别评分和保存记录，避免同一任务的两次分数或 token 用量相互覆盖。
+进度显示总计 `N * k` 次执行，并在任务标签中标明 repeat。
+复用基线不重新执行任务；smoke 和最终 test 仍各执行一次所选任务。
+
+`task_order: longest_first` 将两遍中预计较慢的执行优先派发。第一轮使用
+基线/校准中每题的平均耗时；后续轮次使用上一轮所有完整候选测量的每题平均耗时，
+包括被拒候选和返回错误的任务。同一轮所有 candidate 使用冻结的同一份估计，
+下一轮开始时才更新。缺少新观测时保留旧估计；完全未知的任务使用已知任务估计的均值，
+全部未知则保持 FIFO。同耗时按原始 repeat/任务顺序排列。
+评分前恢复原始顺序，任务集合、重复次数、分数及 token 用量不会因排序而被覆盖。
+`TaskExecutionTiming` 记录占用并发槽位的完整耗时，不包括排队；旧 Harbor 记录
+可从保存的原生 `result.json` 读取起止时间。缺失或无效计时不阻断实验。
+`measurement` 保存 `scheduling` 排序依据和每次执行的 `execution_seconds`。
+smoke 和留出测试的用时不用于更新排序依据。
+
 ## 分数、失败、成本与校准
 
-默认对全部 train trial 等权求均值；也可用 `weight_metric` 指定每个 trial 都必须提供的严格正权重。状态为 error 的 trial 奖励置零，仍保留在分母中；其比例超过 `invalid_missing_frac` 则测量无效。权重、guard 指标或 token 用量缺失，以及平均 token 成本非正，也会使测量无效。基线无效则中止，候选测量无效则拒绝该候选；框架协议错误和 Worker 失败仍可能向外传播。
+默认对全部 train trial 等权求均值；也可用 `weight_metric` 指定每个 trial 都必须提供的严格正权重。状态为 error 的 trial 奖励置零，仍保留在分母中；其比例超过 `invalid_missing_frac`（默认 15%）则测量无效。权重或 guard 指标缺失也会使测量无效。基线无效则中止，候选测量无效则拒绝该候选；Worker 输出截断按下述有限恢复策略处理，其他 Worker 失败和框架协议错误仍向外传播。仅缺少 token 用量不会使测量无效。
 
 成本为每次完整 Target 任务执行的 token 总数均值，包括缓存 token 和已报告的内部辅助模型/子 Agent 用量，不包括演化 Worker 调用。读取器支持原生 usage 格式，优先采用非空 SDK `model_usage` 会话汇总，避免只算父 Agent 或重复计算总量，不能推断未报告用量。这是 token 成本，不是金额或耗时。
+
+用量不完整或均值非正时，`cost` 保存为 null，`cost_accounting` 单独记录完整/部分/缺失用量的 trial 数、已观测 token 总量及其按**全部 trial**计算的均值。后者只是下界，不是对缺失消耗的估计。比较双方有任一方缺少可用的完整成本时，仅在分数提升严格超过 `delta`、满足历史分数底线和领域 guards 时接受候选；不能依靠表面成本下降或新颖性单独晋升，`delta_C` 记为 null。双方用量完整时仍使用原 RRSI 成本公式。这是本地对缺失用量的容错扩展，不等同于上游完整成本选择规则。
+
+MiniAgent 在每次模型返回后将 usage 刷入实时 trace。超时或子进程异常退出时，外层先停止并回收子进程，再恢复有效 trace 条目，并标记 `accounting_complete: false`；末尾损坏行会跳过。服务端尚未返回 usage 的中断请求仍为未知，不能恢复其精确消耗。汇总会计入恢复的已知用量，并单独显示明确标记用量不完整的记录数，不伪造零用量或估计值。
 
 `delta: null` 时默认在每个任务内部对 trial 做 2,000 次 bootstrap，使用 `delta_z * sqrt(2) * std(bootstrap scores)`。多次基线测量有正的样本标准差时据此计算噪声带，否则对 pooled trial 做任务内 bootstrap 并缩放回原测量样本量。校准保留第一次基线作为 incumbent，不挑最好的一次。自动校准要求 `k >= 2` 或 `calibration_evals >= 2`。
 
@@ -84,6 +109,10 @@ ceil(b_min + (b_max - b_min) * (1 + cos(pi * t / T)) / 2)
 
 每个候选先编辑一次，最多再做 `repair_rounds` 次同目录修复。Worker 读取 `context.json` 和 `current-diff.txt`，修复后的声明要覆盖相对 incumbent 的全部变化。smoke 前处理 Snapshot 约束、空编辑、凭据模式检查、二进制 diff 拒绝、critic 意见与探索槽要求。critic 审查完整 diff，返回 `<REVIEW>` 裁决；无法解析时最多调用三次，然后按拒绝处理。
 
+Worker 明确因单次输出上限而截断（`length` 或 `max_output_tokens`）时，受影响阶段最多重新执行 `worker_output_retries` 次（默认 1，即合计两次尝试）。阶段分为每轮分析（包含 digest）和每个候选的提案（包含修复及 critic 审查）。候选重试从 incumbent 的全新目录开始，丢弃半成品修改；分析重试先等待并发 digester 清理完成，丢弃不完整报告。重试提示要求尽早执行具体动作、简洁返回规定结构。模型设置、推理模式、单次输出上限和每次 Worker 调用的超时保持原值；新的调用仍可能消耗完整时间及 token 配额。候选重试耗尽后记为未评测的拒绝候选，继续兄弟候选；分析重试耗尽后跳过该轮并保留 incumbent 和最佳成绩，继续后续轮次。设 `worker_output_retries: 0` 可直接跳过。上下文超限、鉴权、基础设施错误与主动取消不按此策略吞掉。
+
+失败及重试的 Worker 轨迹保留已观测用量。`worker-output-budget` 记录阶段、轮次索引、候选索引、尝试次数、错误及 retry/skip 动作；分析跳过另标记在 `rrsi-context` 和 `round-summary`，候选跳过记入 `edit-history`，不虚构候选分数。
+
 以上门禁通过后，编译候选中的全部 `.py` 文件，再按 train 顺序执行最多 `smoke_n` 道已选代表任务。error 状态使 smoke 失败，这里不要求分数提升。`smoke_n: 0` 只编译、不执行。编译或 smoke 失败直接返回无效候选，不重新进入该候选的修复循环。临时证据文件在资源提交前移除。
 
 digest 引用必须匹配某个解码后轨迹值的原文子串，轨迹文件必须保持不变。每份 digest 上限 6,000 字符、最多三次协议尝试；analyst 交互最多 30 轮。这些是协议常量，不是可配置搜索预算。
@@ -96,6 +125,7 @@ digest 引用必须匹配某个解码后轨迹值的原文子串，轨迹文件�
 | --- | --- | --- |
 | `T` | `20` | 搜索轮数，整数，至少 1。 |
 | `k` | `2` | 每次全量 train 测量的重复数，整数，至少 1。 |
+| `task_order` | `fifo` | 原顺序，或 `longest_first`：按上一轮每题耗时优先派发慢任务。 |
 | `m` | `2` | 每轮兄弟候选槽数，整数，至少 1。 |
 | `b_min` | `1` | 机制预算下限参数，整数，至少 1。 |
 | `b_max` | `4` | 初始机制预算参数，整数，不小于 `b_min`。 |
@@ -110,7 +140,9 @@ digest 引用必须匹配某个解码后轨迹值的原文子串，轨迹文件�
 | `w_n` | `0.5` | 结构新颖性权重，非负。 |
 | `n_prune` | `4` | 剪枝建议的近期轮数窗口，整数，至少 1。 |
 | `repair_rounds` | `5` | 额外提案修复次数，整数，至少 0。 |
+| `worker_output_retries` | `1` | Worker 输出截断后的额外阶段尝试次数，整数，至少 0；耗尽后跳过候选或该轮。 |
 | `invalid_missing_frac` | `0.15` | 允许的 error trial 比例上限，范围 `[0, 1]`。 |
+| `digest_concurrency` | `1` | 同一批独立轨迹调查的并发上限；analyst 每批最多请求 8 条。 |
 | `seed` | `7` | bootstrap 整数随机种子，不控制模型采样。 |
 | `n_fail_traces` | `22` | 低分代表任务数，整数，至少 0。 |
 | `n_success_traces` | `6` | 高分代表任务数，整数，至少 0；两类请求总数必须为正。 |
@@ -122,7 +154,7 @@ digest 引用必须匹配某个解码后轨迹值的原文子串，轨迹文件�
 
 设 train 有 N 题，每次完整测量执行 `N * k` 次 Target 任务。自动 delta 时基线/校准成本为 `N * k * calibration_evals`，显式 delta 时为 `N * k`。完整候选测量最多 `T * m * N * k` 次，候选 smoke 最多额外 `T * m * min(smoke_n, N, n_fail_traces + n_success_traces)` 次。无效提案会减少这些次数；最终 test、重试和原生模型/工具轮次另计。
 
-Worker 成本独立计算：每个候选最多编辑 `repair_rounds + 1` 次，每次到达 critic review 时最多调用三次。每轮还有 analyst 和 digest 调用，每批 digest 请求最多调查八条轨迹。机制预算不限制这些调用的总 API 请求数。
+Worker 成本独立计算：每次候选阶段尝试最多编辑 `repair_rounds + 1` 次，每次到达 critic review 时最多调用三次；输出截断可使整个阶段最多尝试 `worker_output_retries + 1` 次。每轮还有 analyst 和 digest 调用，每批 digest 请求最多调查八条轨迹，分析阶段同样受上述重试上限约束。机制预算不限制这些调用的总 API 请求数。
 
 ## 记录与适配
 

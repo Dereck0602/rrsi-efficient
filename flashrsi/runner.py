@@ -9,6 +9,7 @@ from pathlib import Path
 from statistics import mean
 from types import MappingProxyType
 
+from flashrsi._progress import progress_scope, progress_session
 from flashrsi._records import _trajectory_record, _write_record
 from flashrsi._run_summary import _finish_summary
 from flashrsi.agents import (
@@ -301,48 +302,51 @@ async def _prepare(config):
     return algorithm
 
 
-async def _run(config):
-    algorithm = await _prepare(config)
-    worker, benchmark = algorithm.worker, algorithm.benchmark
-    resolved = copy.deepcopy(config)
-    resolved.algorithm = algorithm.config
-    run_dir = prepare_run_dir(resolved)
-    _artifact_paths(algorithm.target, benchmark, run_dir)
-    algorithm._run_dir = run_dir
-    _LOGGER.info("Experiment: %s", run_dir)
-    try:
-        if worker.component_rules:
-            worker.snapshot.save(run_dir / "snapshots" / "worker.json")
-        final = await algorithm.evolve()
-        results = await algorithm._evaluate(final, benchmark.test, label="test")
-        summary = {
-            "status": "finished",
-            "snapshot_id": final.id,
-            "primary_metric": benchmark.primary_metric,
-            "test_score": mean(
-                item.metrics[benchmark.primary_metric] for item in results
+async def _run(config, *, algorithm=None):
+    with progress_session(config.run.get("progress", "auto")):
+        if algorithm is None:
+            algorithm = await _prepare(config)
+        worker, benchmark = algorithm.worker, algorithm.benchmark
+        resolved = copy.deepcopy(config)
+        resolved.algorithm = algorithm.config
+        run_dir = prepare_run_dir(resolved)
+        _artifact_paths(algorithm.target, benchmark, run_dir)
+        algorithm._run_dir = run_dir
+        _LOGGER.info("Experiment: %s", run_dir)
+        try:
+            if worker.component_rules:
+                worker.snapshot.save(run_dir / "snapshots" / "worker.json")
+            final = await algorithm.evolve()
+            with progress_scope("final-test"):
+                results = await algorithm._evaluate(final, benchmark.test, label="test")
+            summary = {
+                "status": "finished",
+                "snapshot_id": final.id,
+                "primary_metric": benchmark.primary_metric,
+                "test_score": mean(
+                    item.metrics[benchmark.primary_metric] for item in results
+                )
+                if results
+                else None,
+                "test_tasks": len(results),
+                "test_metrics": {
+                    name: mean(item.metrics[name] for item in results)
+                    for name in (results[0].metrics if results else ())
+                    if all(name in item.metrics for item in results)
+                },
+                "benchmark": dict(benchmark.metadata),
+            }
+            _write_record(run_dir / "result.json", summary, config)
+        except BaseException as exc:
+            _write_record(
+                run_dir / "error.json",
+                {"status": "error", "error": str(exc) or type(exc).__name__},
+                config,
             )
-            if results
-            else None,
-            "test_tasks": len(results),
-            "test_metrics": {
-                name: mean(item.metrics[name] for item in results)
-                for name in (results[0].metrics if results else ())
-                if all(name in item.metrics for item in results)
-            },
-            "benchmark": dict(benchmark.metadata),
-        }
-        _write_record(run_dir / "result.json", summary, config)
-    except BaseException as exc:
-        _write_record(
-            run_dir / "error.json",
-            {"status": "error", "error": str(exc) or type(exc).__name__},
-            config,
-        )
-        raise
-    finally:
-        _finish_summary(run_dir)
-    return run_dir, summary
+            raise
+        finally:
+            _finish_summary(run_dir)
+        return run_dir, summary
 
 
 def _lookup(choices, name, role):
@@ -387,74 +391,82 @@ async def _prepare_evaluation(config):
 
 async def _evaluate(config):
     """Evaluate a saved resource version without constructing a Worker or Algorithm."""
-    target, benchmark = await _prepare_evaluation(config)
-    snapshot = target.snapshot
-    run_dir = prepare_run_dir(config)
-    _artifact_paths(target, benchmark, run_dir)
-    source = {
-        "snapshot_path": str(Path(config.run.snapshot).resolve()),
-        "snapshot_id": snapshot.id,
-        "root_id": snapshot.root_id,
-        "parent_id": snapshot.parent_id,
-        "agent_type": snapshot.agent_type,
-    }
-    try:
-        snapshot.save(run_dir / "snapshots" / f"{snapshot.id}.json")
-        _write_record(
-            run_dir / "evaluation.json",
-            {"source": source, "benchmark": dict(benchmark.metadata), "split": "test"},
-            config,
-        )
-        trajectories = await target.rollout(benchmark.test)
-        # Preserve completed requests even when grading fails.
-        _write_record(
-            run_dir / "trajectories" / "000001-rollout.json",
-            {
-                "snapshot_id": snapshot.id,
-                "trajectories": [_trajectory_record(t) for t in trajectories],
-            },
-            config,
-        )
-        results = benchmark.grade(trajectories)
-        if tuple(t.task for t in results) != tuple(benchmark.test):
-            raise ValueError(
-                "rollout/grade must preserve the requested tasks and order"
+    with progress_session(config.run.get("progress", "auto")):
+        target, benchmark = await _prepare_evaluation(config)
+        snapshot = target.snapshot
+        run_dir = prepare_run_dir(config)
+        _artifact_paths(target, benchmark, run_dir)
+        source = {
+            "snapshot_path": str(Path(config.run.snapshot).resolve()),
+            "snapshot_id": snapshot.id,
+            "root_id": snapshot.root_id,
+            "parent_id": snapshot.parent_id,
+            "agent_type": snapshot.agent_type,
+        }
+        try:
+            snapshot.save(run_dir / "snapshots" / f"{snapshot.id}.json")
+            _write_record(
+                run_dir / "evaluation.json",
+                {
+                    "source": source,
+                    "benchmark": dict(benchmark.metadata),
+                    "split": "test",
+                },
+                config,
             )
-        record = {
-            "snapshot_id": snapshot.id,
-            "trajectories": [_trajectory_record(t) for t in results],
-        }
-        _write_record(run_dir / "trajectories" / "000002-test.json", record, config)
-        # The scored record supersedes its raw copy for usage accounting.
-        (run_dir / "trajectories" / "000001-rollout.json").unlink()
-        summary = {
-            "status": "finished",
-            "mode": "evaluate",
-            "source": source,
-            "snapshot_id": snapshot.id,
-            "primary_metric": benchmark.primary_metric,
-            "test_score": mean(t.metrics[benchmark.primary_metric] for t in results),
-            "test_tasks": len(results),
-            "test_metrics": {
-                name: mean(t.metrics[name] for t in results)
-                for name in results[0].metrics
-                if all(name in t.metrics for t in results)
-            },
-            "benchmark": dict(benchmark.metadata),
-        }
-        _write_record(run_dir / "result.json", summary, config)
-    except BaseException as exc:
-        _write_record(
-            run_dir / "error.json",
-            {
-                "status": "error",
+            with progress_scope("final-test"):
+                trajectories = await target.rollout(benchmark.test)
+            # Preserve completed requests even when grading fails.
+            _write_record(
+                run_dir / "trajectories" / "000001-rollout.json",
+                {
+                    "snapshot_id": snapshot.id,
+                    "trajectories": [_trajectory_record(t) for t in trajectories],
+                },
+                config,
+            )
+            results = benchmark.grade(trajectories)
+            if tuple(t.task for t in results) != tuple(benchmark.test):
+                raise ValueError(
+                    "rollout/grade must preserve the requested tasks and order"
+                )
+            record = {
+                "snapshot_id": snapshot.id,
+                "trajectories": [_trajectory_record(t) for t in results],
+            }
+            _write_record(run_dir / "trajectories" / "000002-test.json", record, config)
+            # The scored record supersedes its raw copy for usage accounting.
+            (run_dir / "trajectories" / "000001-rollout.json").unlink()
+            summary = {
+                "status": "finished",
                 "mode": "evaluate",
                 "source": source,
-                "error": str(exc) or type(exc).__name__,
-            },
-            config,
-        )
-        raise
-    finally:
-        _finish_summary(run_dir)
-    return run_dir, summary
+                "snapshot_id": snapshot.id,
+                "primary_metric": benchmark.primary_metric,
+                "test_score": mean(
+                    t.metrics[benchmark.primary_metric] for t in results
+                ),
+                "test_tasks": len(results),
+                "test_metrics": {
+                    name: mean(t.metrics[name] for t in results)
+                    for name in results[0].metrics
+                    if all(name in t.metrics for t in results)
+                },
+                "benchmark": dict(benchmark.metadata),
+            }
+            _write_record(run_dir / "result.json", summary, config)
+        except BaseException as exc:
+            _write_record(
+                run_dir / "error.json",
+                {
+                    "status": "error",
+                    "mode": "evaluate",
+                    "source": source,
+                    "error": str(exc) or type(exc).__name__,
+                },
+                config,
+            )
+            raise
+        finally:
+            _finish_summary(run_dir)
+        return run_dir, summary

@@ -1,0 +1,65 @@
+# TB2.1 RRSI using Vectron's DeepSeek API for both Target and Worker.
+# Run scripts/run_tb21_rrsi_vectron.sh plan/check/run; keys come from the environment.
+run:
+  output_dir: ../runs/tb21-rrsi-vectron
+  progress: auto
+
+benchmark:
+  name: terminal_bench
+  version: "2.1"
+  data_path: ../../terminal-bench-2.1/dataset/tasks
+  seed: 42
+  split_counts:
+    train: 30
+    dev: 0
+    test: 59
+
+agent:
+  name: miniagent
+  concurrency: 8
+  max_turns: 200
+  harbor:
+    agent_min_timeout: 3600
+    setup_timeout: 600
+    cleanup_grace: 30
+  llm:
+    model_name: DeepSeek/DeepSeek-V4.1-Flash-1017
+    api_key: null
+    base_url: https://api.vectron.meta-stone.com/v1
+    max_tokens: 16384
+    reasoning_effort: high
+    llm_max_retries: 1
+    extra_body:
+      temperature: 1.0
+      chat_template_kwargs:
+        enable_thinking: true
+
+algorithm:
+  name: rrsi
+  T: 20
+  k: 2
+  m: 2
+  delta: null
+  seed: 7
+  smoke_n: 2
+  invalid_missing_frac: 0.25
+  digest_concurrency: 8
+  task_order: longest_first
+  worker:
+    type: agent
+    name: miniagent
+    max_turns: 30
+    timeout: 3600
+    llm:
+      model_name: DeepSeek/DeepSeek-V4.1-Flash-1017
+      api_key: null
+      base_url: https://api.vectron.meta-stone.com/v1
+      max_tokens: 16384
+      reasoning_effort: high
+      # At most 3 attempts per Worker request, with 2s / 4s backoff.
+      llm_max_retries: 3
+      llm_retry_policy: transient
+      extra_body:
+        temperature: 1.0
+        chat_template_kwargs:
+          enable_thinking: true

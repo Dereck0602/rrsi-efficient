@@ -9,13 +9,55 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
-from openai import AsyncOpenAI
+import httpx
+from openai import APIConnectionError, AsyncOpenAI
 
 logger = logging.getLogger(__name__)
 
 _FATAL_HTTP_CODES = (400, 401, 402, 403, 404, 422)
+
+
+def http_status(error: Exception) -> int | None:
+    """Read a structured status, including wrapped SDK exceptions."""
+    current, seen = error, set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        status = getattr(current, "status_code", None)
+        if status is None:
+            status = getattr(getattr(current, "response", None), "status_code", None)
+        if isinstance(status, int):
+            return status
+        current = getattr(current, "original_exception", None) or getattr(
+            current, "__cause__", None
+        )
+    return None
+
+
+def retry_delay(error: Exception, attempt: int, attempts: int) -> float | None:
+    """Bound attempts and selectively retry transient API failures when enabled."""
+    if attempt >= attempts or is_fatal_api_error(error):
+        return None
+    if LLM_RETRY_POLICY == "transient":
+        status = http_status(error)
+        if status is not None:
+            if status not in {502, 503, 504}:
+                return None
+        elif not isinstance(
+            error,
+            (
+                APIConnectionError,
+                httpx.TimeoutException,
+                httpx.ConnectError,
+                TimeoutError,
+                ConnectionError,
+            ),
+        ):
+            return None
+    # Preserve the existing timing for profiles that did not opt into this policy.
+    return 2**attempt if LLM_RETRY_POLICY == "legacy" else min(2 ** min(attempt, 5), 30)
 
 
 def is_fatal_api_error(e: Exception) -> bool:
@@ -107,6 +149,14 @@ def configure(config: dict) -> None:
     """Initialize the native runtime in its independent process."""
     global API_KEY, DEFAULT_MODEL, SIDE_MODEL, BASE_URL, SIDE_BASE_URL
     global MAX_TOKENS, LLM_MAX_RETRIES, REASONING_EFFORT, EXTRA_BODY
+    global LLM_RETRY_POLICY
+    policy = config.get("llm_retry_policy", "legacy")
+    if policy not in ("legacy", "transient"):
+        raise ValueError("llm_retry_policy must be legacy or transient")
+    attempts = config.get("llm_max_retries", 1)
+    if policy == "transient" and (type(attempts) is not int or attempts < 1):
+        raise ValueError("llm_max_retries must be a positive integer")
+    LLM_RETRY_POLICY = policy
     API_KEY = config.get("api_key") or ""
     DEFAULT_MODEL = config.get("model_name") or ""
     SIDE_MODEL = config.get("side_model") or DEFAULT_MODEL
@@ -289,6 +339,7 @@ async def text(
     max_tokens: int = 2048,
     _max_retries: int | None = None,
     _return_response: bool = False,
+    _on_error: Callable[[Exception, int, int], None] | None = None,
 ) -> Any:
     """Convenience: single-prompt completion -> text, with retry."""
     max_retries = LLM_MAX_RETRIES if _max_retries is None else max(1, _max_retries)
@@ -309,12 +360,18 @@ async def text(
             return (content, resp) if _return_response else content
         except Exception as e:
             last_err = e
-            if is_fatal_api_error(e):
-                logger.error("llm.text() fatal API error (no retry): %s", e)
+            if _on_error is not None:
+                _on_error(e, attempt, max_retries)
+            delay = retry_delay(e, attempt, max_retries)
+            if delay is None:
                 raise
             logger.warning(
-                "llm.text() failed (attempt %d/%d): %s", attempt, max_retries, e
+                "llm.text() failed (attempt %d/%d): %s status=%s; retry in %ss",
+                attempt,
+                max_retries,
+                type(e).__name__,
+                http_status(e),
+                delay,
             )
-            if attempt < max_retries:
-                await asyncio.sleep(2**attempt)
+            await asyncio.sleep(delay)
     raise last_err  # type: ignore[misc]

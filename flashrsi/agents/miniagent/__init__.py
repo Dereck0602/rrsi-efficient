@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from flashrsi._progress import progress_note
 from flashrsi._records import _redact, _secrets
 from flashrsi.core import Agent, Trajectory
 
@@ -63,37 +64,120 @@ class MiniAgent(Agent):
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=os.name == "posix",
             )
+            timed_out = False
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(json.dumps(request, default=dict).encode()),
                     timeout=timeout,
                 )
             except TimeoutError:
-                return Trajectory(
-                    status="error",
-                    error_message=f"MiniAgent timed out after {timeout:g}s",
-                )
+                timed_out = True
             finally:
                 # Also reap children spawned by native tools before files_dir is
                 # cleaned. Cancellation propagates after this awaited cleanup.
                 await _stop(process)
+            if timed_out:
+                return _recover(
+                    root / "runs", f"MiniAgent timed out after {timeout:g}s", secrets
+                )
             if process.returncode:
                 detail = _redact(stderr.decode(errors="replace"), secrets)
-                return Trajectory(
-                    status="error",
-                    error_message=f"MiniAgent process exited with {process.returncode}: "
+                return _recover(
+                    root / "runs",
+                    f"MiniAgent process exited with {process.returncode}: "
                     + detail[-4000:].strip(),
+                    secrets,
                 )
             # Native messages and usage are preserved; only the status is mapped.
-            result = _redact(json.loads(stdout), secrets)
+            try:
+                result = _redact(json.loads(stdout), secrets)
+            except (ValueError, UnicodeDecodeError):
+                return _recover(
+                    root / "runs", "MiniAgent returned invalid result JSON", secrets
+                )
             success = result["stop_reason"] == "completed"
+            usage = {"model_calls": result["usage"], "turns": result["turns"]}
+            request_errors = result.get("model_request_errors", [])
+            if request_errors and config.get("_worker_system_prompt"):
+                retries = sum(
+                    row.get("retry_delay_seconds") is not None for row in request_errors
+                )
+                progress_note(
+                    f"Worker API: failed_attempts={len(request_errors)} "
+                    f"retries={retries} status={'finished' if success else 'error'}"
+                )
+            if result.get("usage_complete") is False:
+                usage.update(
+                    accounting_complete=False,
+                    accounting_note="Some model requests failed without returning usage.",
+                )
             return Trajectory(
                 status="finished" if success else "error",
                 output=result["answer"] if success else "",
-                messages=result.get("messages", []),
-                usage={"model_calls": result["usage"], "turns": result["turns"]},
+                messages=[
+                    *result.get("messages", []),
+                    *(
+                        {"type": "MiniAgentModelRequestError", **row}
+                        for row in request_errors
+                    ),
+                ],
+                usage=usage,
                 error_message=None if success else result["stop_reason"],
             )
+
+
+def _recover(runs_root, error, secrets):
+    """Salvage flushed native events after the child and its tools have stopped.
+
+    A killed request may have consumed unreported tokens. Preserve the known
+    counters as a lower bound, never invent usage for an in-flight request.
+    """
+    calls, messages = [], []
+    turns = unreadable = 0
+    for path in sorted(runs_root.glob("*/trace.jsonl")):
+        try:
+            with path.open(encoding="utf-8", errors="replace") as stream:
+                for line in stream:
+                    try:
+                        event = json.loads(line)
+                    except ValueError:
+                        unreadable += 1
+                        continue
+                    if not isinstance(event, dict):
+                        unreadable += 1
+                        continue
+                    turn = event.get("turn")
+                    if type(turn) is int:
+                        turns = max(turns, turn)
+                    if event.get("kind") == "model_usage":
+                        calls.append(
+                            {k: v for k, v in event.items() if k not in {"kind", "t"}}
+                        )
+                    # Keep execution evidence, not another copy of credentials
+                    # or the prompt/configuration the caller already records.
+                    if event.get("kind") not in {"llm_config", "run_start", "run_end"}:
+                        messages.append({"type": "MiniAgentPartialTrace", **event})
+        except OSError:
+            unreadable += 1
+    return Trajectory(
+        status="error",
+        error_message=_redact(error, secrets),
+        messages=_redact(messages, secrets),
+        usage=_redact(
+            {
+                "model_calls": calls,
+                "turns": turns,
+                "accounting_complete": False,
+                "accounting_source": "trace.jsonl",
+                "accounting_note": (
+                    "Recovered reported usage only; interrupted requests may have "
+                    "consumed additional unreported tokens."
+                ),
+                "unreadable_trace_entries": unreadable,
+            },
+            secrets,
+        ),
+    )
 
 
 async def _stop(process):
