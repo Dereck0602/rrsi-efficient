@@ -300,5 +300,10 @@ Legacy runs without these new files can resume after any complete, contiguous
 round summary, including rounds with rejected/skipped candidates. Their raw
 measurements, task identities and accounting are validated against the archived
 history. Partial legacy trials are **not** certified for reuse. This fallback is
-reported as `legacy_round_import` in `resume.json`. New runs also preserve final
+reported as `legacy_round_import` in `resume.json`. Only this complete-round
+legacy import permits changing `shared_candidate_queue`, `proposal_concurrency`,
+and `pipeline_evaluation` for future rounds. Changes are recorded under
+`legacy_scheduling_changes`; every other protocol/execution setting remains
+fixed. Native checkpoint resumes still require identical scheduling settings.
+New runs also preserve final
 heldout trials if evolution completed but the final test was interrupted.

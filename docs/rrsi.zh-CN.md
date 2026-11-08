@@ -251,6 +251,10 @@ trial 身份绑定轮次、候选编号、阶段、重复位置、任务内容/c
 
 没有新检查点的旧运行，只能恢复经过完整性校验的完整轮次，不能凭零散容器产物复用
 半轮 trial。
+仅在这种旧日志完整轮次导入时，可以切换 `shared_candidate_queue`、
+`proposal_concurrency` 和 `pipeline_evaluation`，从下一轮采用高效调度。
+变更记录在 `resume.json` 的 `legacy_scheduling_changes` 中；模型、预算、任务、
+选择规则及其他配置仍须一致，新格式检查点的调度配置仍须保持一致。
 恢复元数据记录在 `resume.json`；完成测量按原顺序重新汇总，避免重复计入 trial。
 中断请求尚未报告的用量仍未知。新运行也支持在进化完成、最终留出集评测中断后复用
 已完成的最终测试 trial；独立 `evaluate` 命令的运行方式保持原样。

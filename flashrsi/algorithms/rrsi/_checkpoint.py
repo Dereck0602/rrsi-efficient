@@ -495,6 +495,15 @@ class CheckpointResume:
         return {
             "mode": f"checkpoint-{self.mode}",
             "legacy_round_import": self.legacy,
+            **(
+                {
+                    "legacy_scheduling_changes": getattr(
+                        self, "legacy_scheduling_changes", {}
+                    )
+                }
+                if self.legacy
+                else {}
+            ),
             "source_run": str(self.source),
             "source_sha256": self.hashes,
             "next_round": self.boundary["state"]["start_step"] + 1

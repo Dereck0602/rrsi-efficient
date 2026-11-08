@@ -144,7 +144,19 @@ def test_finished_error_trial_is_kept_without_selective_retry(monkeypatch, tmp_p
 
 
 @pytest.mark.parametrize(
-    "mutation", ["model", "budget", "k", "task", "checksum", "truncated", "snapshot"]
+    "mutation",
+    [
+        "model",
+        "budget",
+        "k",
+        "task",
+        "checksum",
+        "truncated",
+        "snapshot",
+        "shared_candidate_queue",
+        "proposal_concurrency",
+        "pipeline_evaluation",
+    ],
 )
 def test_incompatible_or_corrupt_resume_fails_before_inference(
     monkeypatch, tmp_path, mutation
@@ -161,6 +173,13 @@ def test_incompatible_or_corrupt_resume_fails_before_inference(
         current.worker.config.llm.max_tokens = 99
     elif mutation == "k":
         current.config.k = 99
+    elif mutation in {
+        "shared_candidate_queue",
+        "proposal_concurrency",
+        "pipeline_evaluation",
+    }:
+        value = current.config[mutation]
+        current.config[mutation] = not value if type(value) is bool else value + 1
     elif mutation == "task":
         current.benchmark._splits["train"] = (
             replace(current.benchmark.train[0], question="changed"),

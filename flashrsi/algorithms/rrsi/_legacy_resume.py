@@ -112,11 +112,24 @@ def validate_legacy(resume, algorithm):
     previous = resume.identity["legacy_config"]
     old = {**RRSI._defaults, **previous["algorithm"]}
     new = dict(algorithm.config)
-    # Efficient scheduling does not change completed decisions, but strict
-    # continuation keeps it fixed too; omitted new fields take their defaults.
+    # Legacy imports restore only a complete round, with no in-flight phases or
+    # trials. These scheduling switches affect future work, not saved decisions.
+    # Native checkpoints still require an identical scheduling configuration.
+    scheduling = (
+        "shared_candidate_queue",
+        "proposal_concurrency",
+        "pipeline_evaluation",
+    )
+    changes = {
+        key: {"before": old[key], "after": new[key]}
+        for key in scheduling
+        if old[key] != new[key]
+    }
     for values in (old, new):
         values.pop("worker", None)
         values.pop("name", None)
+        for key in scheduling:
+            values.pop(key)
     if _config_record(old) != _config_record(new):
         raise ValueError("Legacy RRSI algorithm configuration changed")
     for saved, agent in (
@@ -138,6 +151,7 @@ def validate_legacy(resume, algorithm):
         raise ValueError("Legacy checkpoint exceeds configured round count")
     if state["best_score"] != max(state["scores"]):
         raise ValueError("Legacy checkpoint best score differs from history")
+    resume.legacy_scheduling_changes = changes
 
 
 def _validate_history(resume, repeats):
