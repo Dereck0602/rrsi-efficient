@@ -39,6 +39,9 @@ class RoundOneResume:
             if _role_config(old) != _role_config(new):
                 raise ValueError(f"Cannot replay: {role} execution config changed")
         old_config = {**RRSI._defaults, **previous["algorithm"]}
+        old_config["component_classifier"] = previous["algorithm"].get(
+            "component_classifier", "legacy"
+        )
         new_config = {**RRSI._defaults, **config.algorithm}
         allowed = {
             "worker",

@@ -36,6 +36,7 @@ agent:
 
 algorithm:
   name: rrsi
+  component_classifier: harness-v1
   T: 20
   k: 2
   m: 2

@@ -111,6 +111,9 @@ def validate_legacy(resume, algorithm):
 
     previous = resume.identity["legacy_config"]
     old = {**RRSI._defaults, **previous["algorithm"]}
+    old["component_classifier"] = previous["algorithm"].get(
+        "component_classifier", "legacy"
+    )
     new = dict(algorithm.config)
     # Legacy imports restore only a complete round, with no in-flight phases or
     # trials. These scheduling switches affect future work, not saved decisions.

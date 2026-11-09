@@ -40,6 +40,7 @@ agent:
 
 algorithm:
   name: rrsi
+  component_classifier: harness-v1
   # Match the implementation defaults, not the shorter SearchQA example.
   T: 20
   k: 2

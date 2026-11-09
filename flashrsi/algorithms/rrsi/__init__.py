@@ -30,6 +30,17 @@ from flashrsi.algorithms.rrsi._candidate_queue import (
     execute_candidates,
 )
 from flashrsi.algorithms.rrsi._checkpoint import VARIANT, Checkpoints, digest
+from flashrsi.algorithms.rrsi._components import (
+    TAGS as COMPONENT_TAGS,
+)
+from flashrsi.algorithms.rrsi._components import (
+    VERSION as COMPONENT_VERSION,
+)
+from flashrsi.algorithms.rrsi._components import (
+    available_components,
+    classify_edit,
+    profile_name,
+)
 from flashrsi.algorithms.rrsi._cost import estimate_cost, selection_cost
 from flashrsi.algorithms.rrsi._pipeline import (
     GENERATION,
@@ -130,6 +141,7 @@ class RRSI(Algorithm):
         "cost_policy": "complete",
         "cost_estimate_max_frac": 0.25,
         "component_signals": {},
+        "component_classifier": COMPONENT_VERSION,
         "weight_metric": None,
         "guards": {},
     }
@@ -309,7 +321,9 @@ class RRSI(Algorithm):
                                 for task, trace in traces.items()
                             },
                             "history": history,
-                            **_directives(history, scores, step, delta, self.config),
+                            **_directives(
+                                history, scores, step, delta, self.config, current
+                            ),
                         }
                         if analysis_failure:
                             context["skipped_reason"] = analysis_failure
@@ -1054,11 +1068,21 @@ class RRSI(Algorithm):
                     )
                     if not objection:
                         for edit in edits:
-                            tag = _normalize_component(
-                                edit["component"],
-                                _diff(parent, snapshot, edit["paths"]),
-                                self.config.component_signals,
-                            )
+                            if self.config.component_classifier == "legacy":
+                                tag = _normalize_component(
+                                    edit["component"],
+                                    _diff(parent, snapshot, edit["paths"]),
+                                    self.config.component_signals,
+                                )
+                            else:
+                                classification = classify_edit(
+                                    parent,
+                                    snapshot,
+                                    edit,
+                                    self.config.component_signals,
+                                )
+                                edit["classification"] = classification
+                                tag = classification["component"]
                             if tag != edit["component"]:
                                 edit["declared_component"], edit["component"] = (
                                     edit["component"],
@@ -1068,6 +1092,10 @@ class RRSI(Algorithm):
                             edit["component"] in reserved for edit in edits
                         ):
                             objection = f"reserved slot must exercise one of {reserved}, judged by the diff"
+                            if self.config.component_classifier != "legacy":
+                                objection += "; classification evidence: " + json.dumps(
+                                    [edit["classification"] for edit in edits]
+                                )
                     if not objection:
                         failure = await self._smoke(snapshot, context["traces"])
                         return (None if failure else snapshot), edits, changes, failure
@@ -1141,6 +1169,10 @@ class RRSI(Algorithm):
 
     def _check(self):
         config = self.config
+        if config.component_classifier not in ("legacy", COMPONENT_VERSION):
+            raise ValueError(
+                f"component_classifier must be legacy or {COMPONENT_VERSION}"
+            )
         unknown = set(config) - self._defaults.keys() - {"name", "worker"}
         if unknown:
             raise ValueError(f"unknown RRSI options: {', '.join(sorted(unknown))}")
@@ -1219,10 +1251,21 @@ def _edit_budget(t, config):
     return math.ceil(round(value, 9))
 
 
-def _directives(history, scores, t, delta, config):
+def _directives(history, scores, t, delta, config, snapshot=None):
     measured = [row for row in history if row["delta_S"] is not None]
-    tried = {row["component"] for row in measured}
-    untried = sorted(_COMPONENTS - tried)
+    tried = {row["component"] for row in measured} & COMPONENT_TAGS
+    available = _COMPONENTS
+    adaptation = {}
+    if snapshot is not None and config.component_classifier != "legacy":
+        available = set(available_components(snapshot, config.component_signals))
+        adaptation = {
+            "component_adaptation": {
+                "version": COMPONENT_VERSION,
+                "profile": profile_name(snapshot),
+                "available": sorted(available),
+            }
+        }
+    untried = sorted(available - tried)
     stalled = t >= config.w and scores[t] - scores[t - config.w] <= delta
     prune = []
     for component in sorted(tried):
@@ -1243,7 +1286,7 @@ def _directives(history, scores, t, delta, config):
                     ],
                 }
             )
-    return {"stalled": stalled, "untried": untried, "prune": prune}
+    return {"stalled": stalled, "untried": untried, "prune": prune, **adaptation}
 
 
 def _noise_band(trials, z, seed, weights=None):

@@ -24,9 +24,9 @@ algorithm:
   delta: null  # Bootstrap from repeated baseline trials; supply a measured band if known.
   # Other search, analysis and review settings use RRSI defaults; see docs/rrsi.md.
   # Editable files come from the target's existing components.yaml.
-  # Optional native tool signal; file permissions still come from Snapshot.
-  component_signals:
-    client_tool: ['tools/[^\n]+\.py', 'tool_descriptions/[^\n]+\.json', '\btool_schemas\b']
+  # Native semantic adapters load automatically for the selected Target.
+  component_classifier: harness-v1
+  component_signals: {}  # Optional additional regex evidence for custom extensions.
   worker:
     type: agent
     name: miniagent

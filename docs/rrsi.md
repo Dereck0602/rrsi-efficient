@@ -156,6 +156,46 @@ also require all configured guards to pass
 
 Novelty counts distinct `client_tool`, `skill`, `memory`, and `subagent` tags absent from previously winning edits. Other tags do not earn this bonus. Tagging is checked against each declared edit's actual diff, with optional `component_signals` supplying additional regex evidence.
 
+### Harness semantic adapters
+
+New runs default to `component_classifier: harness-v1`. The Target's Snapshot
+`agent_type` selects the adapter automatically; `component_signals: {}` means
+no *additional* user regexes, not missing native adaptation. Rules live in the
+algorithm, outside the candidate-editable files. Snapshot component permissions
+still control what may be edited; the semantic adapter does not expand them.
+
+| Target | Native classification surfaces |
+| --- | --- |
+| MiniAgent | `prompts`, `skills`, `agent.yaml`, `tools`/schemas, `sub_agents`, middleware, and runtime loop/context/trace/tool code |
+| Codex (bundled Python core) | Instructions and skills; `config.toml`; loop, compaction/context/history, client/output, tools/MCP, memory and subagents; native extension resources |
+| Claude Code | `CLAUDE.md`/output styles, skills/commands, agent definitions, hooks, MCP/LSP registrations and settings; PreCompact hooks supply a context-management surface |
+| Pi, Hermes, OpenClaw, OpenCode | Their exposed prompt/config/skill resources and embedded loop, compaction, transport, tool and session runtimes |
+
+Claude Code's closed CLI core is not editable, and its adapter disables native
+auto-memory. The search therefore does not reserve a native memory slot for that
+Target. Custom `component_signals` may explicitly add evidence for additional
+extensions, but still require a working implementation and critic review.
+
+Classification examines each edit's before/after files. Python changes are
+compared without comments/docstrings; unrelated unchanged code cannot supply a
+signal. String-only prompt edits and schema description-only edits do not earn
+tool/memory novelty. JSON/YAML/TOML key changes distinguish configuration and
+resource registration. A supported Worker declaration is preserved after critic
+review. Ambiguous/unsupported changes become `unclassified`, not `prompt`:
+ordinary candidates may still be measured, but the tag earns no novelty and does
+not satisfy a reserved exploration slot. Each edit records its classifier
+version, profile and evidence; rejected exploration attempts include this evidence
+in repair feedback. This is static evidence, not proof of runtime reachability:
+the critic, syntax gate, smoke checks and measured selection still apply.
+
+`component_classifier: legacy` retains the old generic regex/fallback behavior
+for reproducing archived experiments. Archives without the option are legacy.
+Classifier mode is part of checkpoint identity: old proposals/trials cannot be
+silently resumed with new selection semantics. Use `legacy` for exact old-run
+continuation; changing classification requires an explicitly separate experiment.
+The `harness-v1` profile version must be bumped when its classification semantics
+change. Existing running processes and their saved history are not rewritten.
+
 Among admissible candidates, choose the highest **score**, not the highest utility or lowest cost. Equal candidate scores retain the earlier generated candidate. The incumbent is not included in that tie comparison: a same-score candidate can replace it through lower cost or novelty. A slightly lower-scoring candidate can also replace it within the historical floor when the utility rule passes. If none qualifies, keep the incumbent.
 
 `guards` constrain the unweighted mean change of named Benchmark metrics relative to the incumbent, using `max_drop` and/or `max_rise`. They apply in addition to the score/cost rule. An admissible candidate that loses to another candidate is recorded as `LOST`; only the winner contributes to accepted-component novelty history. Final selection returns the last accepted version without restoring the Snapshot associated with S*.
@@ -237,6 +277,7 @@ Defaults belong under `algorithm`. RRSI rejects unknown algorithm options.
 | `calibration_evals` | `1` | Total baseline measurements when auto-calibrating, integer at least 1. |
 | `smoke_n` | `2` | Maximum representative tasks per candidate smoke, integer at least 0. |
 | `component_signals` | `{}` | Semantic tags mapped to nonempty regex lists; not file permissions. |
+| `component_classifier` | `harness-v1` | Automatic native semantic adapters; `legacy` reproduces archived classification. |
 | `weight_metric` | `None` | Optional positive per-trial weighting metric. |
 | `guards` | `{}` | Metric names mapped to nonnegative `max_drop`/`max_rise` limits. |
 

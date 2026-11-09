@@ -97,7 +97,10 @@ def signature(algorithm):
     return _config_record(
         {
             "algorithm": {
-                k: v for k, v in algorithm.config.items() if k not in {"worker", "name"}
+                k: v
+                for k, v in algorithm.config.items()
+                if k not in {"worker", "name"}
+                and not (k == "component_classifier" and v == "legacy")
             },
             "target": _role_config(algorithm.target.config),
             "worker": _role_config(algorithm.worker.config),

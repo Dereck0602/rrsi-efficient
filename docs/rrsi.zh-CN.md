@@ -56,6 +56,21 @@ also require all configured guards to pass
 
 novelty 统计此前获胜编辑中未出现过的不同 `client_tool`、`skill`、`memory`、`subagent` 标签数量，其他标签不获得此奖励。标签按每项声明的实际 diff 核对，可用 `component_signals` 补充正则证据。
 
+新实验默认 `component_classifier: harness-v1`，按 Target Snapshot 的 `agent_type` 自动加载语义适配。因此 `component_signals: {}` 只表示没有额外自定义规则，不再意味着缺少 harness 适配。分类器在算法目录中，候选不能通过修改自身文件篡改分类规则；文件编辑权限仍由 Snapshot 决定。
+
+| Harness | 自动识别入口 |
+| --- | --- |
+| MiniAgent | 提示词、skills、agent.yaml、工具与 schema、sub_agents、middleware，以及执行循环、上下文和 trace 代码 |
+| Codex（仓库内的 Python core） | 指令与 skills、config.toml、循环、压缩与历史、输出协议、工具/MCP、memory、subagents 及原生扩展资源 |
+| Claude Code | CLAUDE.md、output-styles、skills/commands、agents、hooks、MCP/LSP、settings；通过 PreCompact hooks 识别上下文管理 |
+| Pi / Hermes / OpenClaw / OpenCode | 各自开放的指令、配置、技能资源，以及内嵌的循环、压缩、传输、工具和会话运行时 |
+
+Claude Code 的 CLI 内核不可编辑，本仓库适配器还禁用了原生自动记忆，因此不会强制分配原生 memory 探索槽。自定义扩展仍可通过 `component_signals` 提供额外证据，并接受 critic 的真实接入检查。
+
+分类按每项 edit 的实际文件变化判定：Python 注释/docstring 和未变化的上下文不会提供结构性证据；仅修改提示文本或工具 schema 描述不会获得新工具/记忆奖励；JSON/YAML/TOML 按实际变化的键识别配置和资源接入。真实证据支持的声明保留原标签，无法确认的改动标记为 `unclassified`，不再默认冒充 `prompt`。未分类的普通候选仍可评测，但不获得 novelty，也不能满足探索槽要求。edit-history 保存分类版本、适配名及证据，探索槽拒绝时反馈具体依据。静态分类不代替 critic、语法检查、smoke 和正式评测。
+
+`component_classifier: legacy` 保留旧分类行为。没有记录该选项的旧实验按 legacy 处理；分类版本纳入断点身份校验，不能把旧候选/逐 trial 缓存静默混入新分类实验。精确续跑旧实验时显式使用 legacy，切换规则需要另开明确区分的实验。历史记录和运行中的进程不会自动重写。
+
 可接受候选之间按**分数**选择，不按效用最大或成本最低选择。候选同分时保留较早生成者。incumbent 不参与这个同分比较：同分候选可以凭较低成本或新颖性替换它；稍低分候选也可在历史底线内因效用规则通过而替换它。没有合格候选则保留 incumbent。
 
 `guards` 按相对 incumbent 的 Benchmark 指标非加权均值变化执行 `max_drop` 和/或 `max_rise` 约束，与分数/成本规则共同生效。可接受但输给其他候选的版本记为 `LOST`；只有胜者进入已接受组件的新颖性历史。最终返回最后接受的版本，不恢复 S* 对应的 Snapshot。

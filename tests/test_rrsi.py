@@ -509,7 +509,8 @@ def test_stall_requires_actual_untried_component_and_history_prunes_losers(
         context = [row for row in records(prompt, directory) if "history" in row][-1]
         if count == 2:
             assert context["stalled"]
-            assert context["untried"] == sorted(COMPONENTS - {"skill"})
+            # This fixture exposes only skill/tool files, not a runtime core.
+            assert context["untried"] == ["client_tool", "prompt"]
             assert context["prune"][0]["component"] == "skill"
             assert context["history"][0]["outcome"] == "REJECTED"
         (directory / "skills/main.md").write_text(f"UNHELPFUL-{count}", newline="\n")

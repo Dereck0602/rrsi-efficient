@@ -52,6 +52,9 @@ class BaselineResume:
                     f"Cannot reuse baseline: {role} execution config changed"
                 )
         old_algorithm = {**RRSI._defaults, **previous["algorithm"]}
+        old_algorithm["component_classifier"] = previous["algorithm"].get(
+            "component_classifier", "legacy"
+        )
         new_algorithm = {**RRSI._defaults, **config.algorithm}
         for values in (old_algorithm, new_algorithm):
             values.pop("worker", None)
